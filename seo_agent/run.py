@@ -27,7 +27,8 @@ def daily(site_id):
         w.set_seo(live["post_id"], p["title"], p["meta"]); st = "applied"
     else: st = "dry-run"
     db.log_change(c, site_id, t["page"], "title", old, {"title": p["title"], "meta": p["meta"], "post_id": live["post_id"]}, st, p["why"])
-    print(st, t["page"], "->", p["title"])
+    print(st, t["page"]); print("OLD title:", old["title"]); print("OLD meta :", old["meta"])
+    print("NEW title:", p["title"]); print("NEW meta :", p["meta"]); print("WHY:", p["why"]); print("QUERIES:", q[:5])
 def rollback(site_id, change_id):
     from . import wp
     site = sites()[site_id]; c = db.conn()
