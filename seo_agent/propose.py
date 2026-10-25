@@ -7,6 +7,7 @@ def propose(page, live, queries, feedback=""):
     cl = anthropic.Anthropic()
     msg = {"url": page, "current_title": live["title"], "current_meta": live["meta"], "h1": live["h1"],
            "top_queries": queries, "previous_errors": feedback}
-    r = cl.messages.create(model=os.environ.get("SEO_MODEL", "claude-haiku-5-5"), max_tokens=400, system=SYS,
+    r = cl.messages.create(model=os.environ.get("SEO_MODEL", "claude-haiku-5-5"), max_tokens=2000, system=SYS,
                            messages=[{"role": "user", "content": json.dumps(msg)}])
-    t = r.content[0].text; return json.loads(t[t.index("{"): t.rindex("}") + 1])
+    t = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+    return json.loads(t[t.index("{"): t.rindex("}") + 1])
