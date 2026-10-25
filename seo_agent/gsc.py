@@ -15,7 +15,8 @@ def pull(c, site, days=30):
     c.commit(); return len(rows)
 def top_queries(site, page, days=28, n=8):
     s = service(); end = dt.date.today() - dt.timedelta(days=2); start = end - dt.timedelta(days=days)
-    body = {"startDate": str(start), "endDate": str(end), "dimensions": ["query"], "rowLimit": n,
+    body = {"startDate": str(start), "endDate": str(end), "dimensions": ["query"], "rowLimit": 200,
             "dimensionFilterGroups": [{"filters": [{"dimension":"page","operator":"equals","expression":page}]}]}
     rows = s.searchanalytics().query(siteUrl=site["gsc_property"], body=body).execute().get("rows", [])
-    return [{"q": r["keys"][0], "impr": r["impressions"], "pos": round(r["position"],1)} for r in rows]
+    rows.sort(key=lambda r: -r["impressions"])
+    return [{"q": r["keys"][0], "impr": r["impressions"], "pos": round(r["position"],1)} for r in rows[:n]]
