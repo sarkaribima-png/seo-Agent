@@ -2,7 +2,7 @@ import os, json, anthropic
 SYS = """You are an SEO editor for a medical/cosmetic surgery clinic website. Write ONE title and ONE meta description
 for the page. Rules: title 30-60 chars; meta 110-160 chars; include the main query naturally; use only facts present in
 the input; NEVER claim rankings, guarantees, percentages, 'best', FDA/NABH approvals, or competitor names. Keep brand suffix
-' | Kalosa' only if the title stays under 60. Reply with JSON only: {"title":"","meta":"","why":""}"""
+' | Kalosa' only if the title stays under 60.Use the top_queries: the title must contain the highest-impression query naturally, and the meta must add a concrete reason to click (what the page covers). If the current title already does this well, return it unchanged. Reply with JSON only: {"title":"","meta":"","why":""}"""
 def propose(page, live, queries, feedback=""):
     cl = anthropic.Anthropic()
     msg = {"url": page, "current_title": live["title"], "current_meta": live["meta"], "h1": live["h1"],
