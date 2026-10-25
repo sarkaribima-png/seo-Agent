@@ -13,7 +13,7 @@ def log_change(c, site, page, kind, old, new, status, reason=""):
               (site, page, time.time(), kind, json.dumps(old), json.dumps(new), status, reason)); c.commit()
 def changed_today(c, site):
     t = time.time() - 86400
-    return c.execute("SELECT COUNT(DISTINCT page) n FROM changes WHERE site=? AND ts>? AND status IN('applied','dry-run')",(site,t)).fetchone()["n"]
+    return c.execute("SELECT COUNT(DISTINCT page) n FROM changes WHERE site=? AND ts>? AND status='applied'",(site,t)).fetchone()["n"]
 def recently_changed(c, site, page, days=21):
     t = time.time() - days*86400
     return c.execute("SELECT 1 FROM changes WHERE site=? AND page=? AND ts>? AND status IN('applied','dry-run')",(site,page,t)).fetchone() is not None
