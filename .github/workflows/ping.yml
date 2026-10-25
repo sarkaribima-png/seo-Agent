@@ -14,3 +14,5 @@ jobs:
           curl -s -u "$U:$P" https://www.kalosa.in/wp-json/wp/v2/users/me | head -c 300; echo
           echo "--- ping"; curl -s -u "$U:$P" https://www.kalosa.in/wp-json/seo-agent/v1/ping; echo
           echo "--- username length: ${#U}, password length: ${#P}"
+          echo "--- debug (what the server sees)"; curl -s -u "$U:$P" https://www.kalosa.in/wp-json/seo-agent/v1/debug; echo
+          echo "--- response headers"; curl -sI -u "$U:$P" https://www.kalosa.in/wp-json/wp/v2/users/me | grep -iE "^(HTTP|server|cf-|x-litespeed|x-cache|www-authenticate)"
