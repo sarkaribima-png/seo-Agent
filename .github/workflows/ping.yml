@@ -8,7 +8,7 @@ jobs:
         env:
           U: ${{ secrets.KALOSA_WP_USER }}
           P: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
-                run: |
+        run: |
           echo "--- who am I (standard WordPress endpoint)"
           curl -s -o /dev/null -w "HTTP %{http_code}\n" -u "$U:$P" https://www.kalosa.in/wp-json/wp/v2/users/me
           curl -s -u "$U:$P" https://www.kalosa.in/wp-json/wp/v2/users/me | head -c 300; echo
