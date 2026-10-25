@@ -8,7 +8,7 @@ jobs:
         env:
           U: ${{ secrets.KALOSA_WP_USER }}
           P: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
-                run: |
+        run: |
           echo "--- audit tummy tuck (777)"
           curl -s -u "$U:$P" https://www.kalosa.in/wp-json/seo-agent/v1/audit/777 | python3 -c "import sys,json; d=json.load(sys.stdin); d.pop('headings',None); print(json.dumps(d,indent=1))"
           echo "--- audit BBL (2535)"
