@@ -4,7 +4,7 @@ for the page. Rules: title 30-60 chars; meta 110-160 chars; use only facts prese
 guarantees, percentages, 'best', FDA/NABH approvals, or competitor names. Use top_queries: the title must contain the
 highest-impression query naturally, and the meta must add a concrete reason to click. Mention only things shown in h1/h2:
 if the headings do not show reviews, prices or surgeon details, do not mention them. If the current title already does
-this well, return it unchanged. Keep brand suffix ' | Kalosa' only if the title stays under 60.
+this well, return it unchanged.If the current title contains a city name (Gurgaon, Delhi), keep that city in the new title. Do not drop local intent. Keep brand suffix ' | Kalosa' only if the title stays under 60.
 Reply with JSON only: {"title":"","meta":"","why":""}"""
 def propose(page, live, queries, feedback=""):
     cl = anthropic.Anthropic()
