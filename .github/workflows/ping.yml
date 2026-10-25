@@ -1,0 +1,13 @@
+name: bridge-ping
+on: workflow_dispatch
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping plugin
+        env:
+          U: ${{ secrets.KALOSA_WP_USER }}
+          P: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
+        run: |
+          echo "--- ping"; curl -s -u "$U:$P" https://www.kalosa.in/wp-json/seo-agent/v1/ping; echo
+          echo "--- audit of tummy tuck page (id 777)"; curl -s -u "$U:$P" https://www.kalosa.in/wp-json/seo-agent/v1/audit/777 | head -c 1500; echo
