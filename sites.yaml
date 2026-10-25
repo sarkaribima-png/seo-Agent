@@ -1,7 +1,7 @@
 sites:
   - id: kalosa
     domain: kalosa.in
-    gsc_property: "sc-domain:kalosa.in"
+  gsc_property: "https://www.kalosa.in/"
     type: wordpress
     wp_base: "https://www.kalosa.in"
     secrets_prefix: KALOSA        # env: KALOSA_WP_USER, KALOSA_WP_APP_PASSWORD
