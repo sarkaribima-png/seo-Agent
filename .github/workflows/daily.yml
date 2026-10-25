@@ -1,0 +1,22 @@
+name: seo-agent-daily
+on:
+  schedule: [{cron: "30 3 * * *"}]     # 09:00 IST
+  workflow_dispatch:
+permissions: {contents: write}
+jobs:
+  kalosa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -m seo_agent.run daily kalosa
+        env:
+          GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KALOSA_WP_USER: ${{ secrets.KALOSA_WP_USER }}
+          KALOSA_WP_APP_PASSWORD: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
+      - run: |
+          git config user.name seo-agent; git config user.email seo-agent@users.noreply.github.com
+          git add data/ && git commit -m "seo-agent: daily state" || true; git push || true
