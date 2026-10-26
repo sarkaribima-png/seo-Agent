@@ -9,7 +9,7 @@ pick ONE page (limit 1/day/site) -> Claude drafts title+meta -> guardrails -> dr
    In Search Console -> Settings -> Users, add the service-account email as *Restricted* user on kalosa.in.
 3. WordPress: Users -> Profile -> Application Passwords -> create one for a user that can edit pages.
 4. GitHub repo -> Settings -> Secrets -> Actions, add:
-   GSC_SERVICE_ACCOUNT_JSON, ANTHROPIC_API_KEY, KALOSA_WP_USER, KALOSA_WP_APP_PASSWORD
+   GSC_SERVICE_ACCOUNT_JSON, ANTHROPIC_API_KEY, KALOSA_WP_USER, KALOSA_WP_APP_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_KEY
    (never paste keys in chat or commit them).
 5. Run workflow manually (workflow_dispatch). `mode: dry-run` in sites.yaml only logs proposals.
 6. Read data/state.db -> table `changes`. When proposals look right, set `mode: live`.
@@ -24,3 +24,10 @@ python -m pytest -q
 Auto: title, meta description (1 page/day/site, page not touched in last 21 days).
 Needs your approval (not implemented as auto): delete, redirect, sitewide settings, content rewrite, schema, noindex.
 Banned in copy: guarantees, 100%, FDA/NABH, ranking claims, competitor names (see sites.yaml).
+
+## v0.2
+- Needs plugin seo-agent-bridge on the site and supabase/schema.sql run once.
+- Mode (dry-run | live | paused) is read from Supabase table `sites` (change it from the dashboard).
+- dry-run: proposals are written as `pending` (nothing changes on the site). Set a proposal to `approved` and the next run applies it.
+- live: title/meta proposals are applied immediately (1 page/day), with plugin backup.
+- Run "audit-all" manually (Actions -> Run workflow -> command: audit-all) to fill page_audits for every page.
