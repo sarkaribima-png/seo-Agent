@@ -1,11 +1,11 @@
 sites:
   - id: kalosa
     domain: kalosa.in
-    gsc_property: "sc-domain:kalosa.in"
+    gsc_property: "https://www.kalosa.in/"
     type: wordpress
     wp_base: "https://www.kalosa.in"
-    secrets_prefix: KALOSA        # env: KALOSA_WP_USER, KALOSA_WP_APP_PASSWORD
+    secrets_prefix: KALOSA
     daily_page_limit: 1
-    mode: dry-run                 # dry-run | live  (start with dry-run)
+    mode: dry-run
     banned_terms: ["100%", "guarantee", "painless", "scarless", "FDA", "best in india", "#1"]
-    competitor_names: []          # add names the agent must never use
+    competitor_names: []
