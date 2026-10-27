@@ -70,8 +70,9 @@ def run(site_id):
     msg = {"site": {"niche": site.get("niche"), "profile": site.get("profile"), "brand_voice": site.get("brand_voice"),
                     "banned_terms": site.get("banned_terms")},
            "competitor_pages": pages, "competitor_keywords": kws, "existing_keywords": sorted(existing)[:200], "how_many": MAX_IDEAS}
-         r = anthropic.Anthropic().messages.create(model=os.environ.get("SEO_MODEL", "claude-haiku-5-5"), max_tokens=12000, system=SYS,
-                                              messages=[{"role": "user", "content": json.dumps(msg)}])
+    client = anthropic.Anthropic()
+    prompt = json.dumps(msg)
+    r = client.messages.create(model=os.environ.get("SEO_MODEL", "claude-haiku-5-5"), max_tokens=12000, system=SYS, messages=[{"role": "user", "content": prompt}])
     t = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
     if "[" not in t or "]" not in t:
         return print("Claude did not return a list. stop_reason:", r.stop_reason, "| reply start:", t[:600] or "(empty)")
