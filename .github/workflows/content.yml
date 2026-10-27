@@ -1,0 +1,20 @@
+name: content-ideas
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "site id"
+        default: "kalosa"
+jobs:
+  ideas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -m seo_agent.ideas ${{ github.event.inputs.site || 'kalosa' }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
