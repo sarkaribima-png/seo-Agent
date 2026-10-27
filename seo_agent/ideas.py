@@ -70,10 +70,16 @@ def run(site_id):
     msg = {"site": {"niche": site.get("niche"), "profile": site.get("profile"), "brand_voice": site.get("brand_voice"),
                     "banned_terms": site.get("banned_terms")},
            "competitor_pages": pages, "competitor_keywords": kws, "existing_keywords": sorted(existing)[:200], "how_many": MAX_IDEAS}
-    r = anthropic.Anthropic().messages.create(model=os.environ.get("SEO_MODEL", "claude-haiku-5-5"), max_tokens=6000, system=SYS,
+      r = anthropic.Anthropic().messages.create(model=os.environ.get("SEO_MODEL", "claude-haiku-5-5"), max_tokens=12000, system=SYS,
                                               messages=[{"role": "user", "content": json.dumps(msg)}])
     t = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
-    ideas = clean(json.loads(t[t.index("["): t.rindex("]") + 1]), site.get("banned_terms") or [], names, existing)[:MAX_IDEAS]
+    if "[" not in t or "]" not in t:
+        return print("Claude did not return a list. stop_reason:", r.stop_reason, "| reply start:", t[:600] or "(empty)")
+    try:
+        raw = json.loads(t[t.index("["): t.rindex("]") + 1])
+    except ValueError as e:
+        return print("Could not read Claude's list:", e, "| stop_reason:", r.stop_reason, "| reply start:", t[:600])
+    ideas = clean(raw, site.get("banned_terms") or [], names, existing)[:MAX_IDEAS]
     kwmap = {k["keyword"].lower(): k for k in kws}; pgmap = {p["url"]: p for p in pages}
     rows = []
     for i in ideas:
