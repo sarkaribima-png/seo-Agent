@@ -1,0 +1,36 @@
+name: content-posts
+on:
+  schedule:
+    - cron: "0 4 * * *"    # 09:30 IST: write drafts for approved topics
+    - cron: "0 14 * * *"   # 19:30 IST: publish one reviewed and approved post
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "write | publish"
+        default: "write"
+      site:
+        description: "site id"
+        default: "kalosa"
+permissions: {contents: read}
+jobs:
+  posts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - name: Run
+        run: |
+          CMD="${{ github.event.inputs.command }}"
+          if [ -z "$CMD" ]; then
+            if [ "${{ github.event.schedule }}" = "0 14 * * *" ]; then CMD=publish; else CMD=write; fi
+          fi
+          python -m seo_agent.content "$CMD" "${{ github.event.inputs.site || 'kalosa' }}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          KALOSA_WP_USER: ${{ secrets.KALOSA_WP_USER }}
+          KALOSA_WP_APP_PASSWORD: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
