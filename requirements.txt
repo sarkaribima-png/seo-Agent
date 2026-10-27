@@ -4,3 +4,4 @@ requests
 pyyaml
 anthropic
 pytest
+pillow
