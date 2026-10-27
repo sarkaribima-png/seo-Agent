@@ -16,6 +16,7 @@ IMG_STYLE = {"medical": "Flat minimal vector illustration, soft calm colours, si
 SYS = """You write blog posts for a website. The reader is a normal adult who is not an expert. Write like a careful, kind human.
 READABILITY: aim for US school grade 5 or lower. Short sentences (average under 12 words). Common words. When a medical or technical
 term is needed, say it once and explain it in plain words in the same sentence. Active voice. One idea per sentence.
+RHYTHM: mostly short sentences, but mix lengths on purpose. Add a few sentences of 14 to 20 words and a few of 3 to 6 words. Use contractions (it's, don't, you'll) now and then. Use small everyday examples. Do not make every sentence the same shape.
 STRUCTURE: the first two sentences answer the main question of the post. Then 4 to 7 sections, each with an h2 heading (h3 allowed).
 Use the primary keyword in the first 100 words and in one h2. Use secondary keywords where they fit naturally. No stuffing.
 End with a short FAQ section (h2 'Frequently asked questions' with h3 questions and short answers) and then a short, calm line about
@@ -79,6 +80,25 @@ def ask(user, prev=""):
     return "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
 
 
+HUM = """You are a careful human editor. Rewrite the article so it reads like a real person wrote it, not a machine. Keep every fact,
+every heading and the same HTML tags (h2, h3, p, ul, li only). Do not add facts, numbers or claims. Keep the meaning and the length
+(within 10 percent). Keep the language simple: short common words, reading grade about 5 to 6.
+Make the rhythm uneven the way real writing is: some very short sentences, some longer ones of 15 to 22 words. Start sentences in
+different ways. Use contractions now and then. Replace stiff phrases with plain ones. Cut filler and any sentence that only repeats the
+point. Remove lists of exactly three that look forced. """ + RULES + """
+Reply with the article HTML only inside <article></article>."""
+
+
+def humanize_pass(art, banned, medical, target):
+    import anthropic
+    r = anthropic.Anthropic().messages.create(model=MODEL, max_tokens=12000, system=HUM, messages=[{"role": "user", "content": art}])
+    new = tag("".join(b.text for b in r.content if getattr(b, "type", "") == "text"), "article")
+    if not new: return art, False
+    w0, w1 = len(plain(art).split()), len(plain(new).split())
+    if grade(new) > TARGET_GRADE + 0.7 or lint(new, banned, medical) or not (0.85 * w0 <= w1 <= 1.15 * w0): return art, False
+    return new, True
+
+
 def draft_article(site, idea, brain):
     banned = site.get("banned_terms") or []; medical = site.get("profile") == "medical"
     target = int(idea.get("word_count") or 1200)
@@ -104,49 +124,77 @@ def draft_article(site, idea, brain):
         if not bad: break
         feedback, prev = "; ".join(bad), art
     if not best: raise RuntimeError("Claude returned no article")
+    try:
+        new, ok = humanize_pass(best["art"], banned, medical, target)
+        if ok: best.update(art=new, grade=grade(new), words=len(plain(new).split()), issues=lint(new, banned, medical))
+        print("humanizer pass:", "applied" if ok else "skipped (rewrite broke a rule)")
+    except Exception as e:
+        print("humanizer pass failed:", str(e)[:150])
     return best
+
+
+PREFER = ["gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest", "dall-e-3"]
+
+
+def pick_image_model(key):
+    if os.environ.get("OPENAI_IMAGE_MODEL"): return os.environ["OPENAI_IMAGE_MODEL"], ""
+    try:
+        r = requests.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30); r.raise_for_status()
+        ids = [m["id"] for m in r.json()["data"]]
+    except Exception as e:
+        return None, f"could not list OpenAI models: {str(e)[:120]}"
+    for p in PREFER:
+        if p in ids: return p, ""
+    cand = sorted(i for i in ids if "image" in i or i.startswith("dall-e"))
+    return (cand[0], "") if cand else (None, "no image model on this OpenAI key; models seen: " + ", ".join(sorted(ids)[:12]))
 
 
 def make_images(prompts, profile):
     key = os.environ.get("OPENAI_API_KEY")
     if not key: return [], "OPENAI_API_KEY missing"
+    model, why = pick_image_model(key)
+    if not model: return [], why
+    print("image model:", model)
     style = IMG_STYLE["medical"] if profile == "medical" else IMG_STYLE["default"]; out, note = [], ""
     for p in prompts[:3]:
-        try:
-            body = {"model": IMG_MODEL, "prompt": style + str(p)[:600], "size": "1536x1024", "n": 1}
-            if IMG_MODEL.startswith("gpt-image"): body["quality"] = os.environ.get("OPENAI_IMAGE_QUALITY", "medium")
-            r = requests.post("https://api.openai.com/v1/images/generations", headers={"Authorization": f"Bearer {key}"}, json=body, timeout=240)
-            if not r.ok: raise RuntimeError(f"{r.status_code} {r.text[:400]}")
-            d = r.json()["data"][0]
-            raw = base64.b64decode(d["b64_json"]) if d.get("b64_json") else requests.get(d["url"], timeout=60).content
-            out.append((raw, str(p)))
-        except Exception as e:
-            note = f"image failed: {str(e)[:420]}"
+        prompt = style + str(p)[:600]; last = ""
+        for body in ({"model": model, "prompt": prompt, "size": "1536x1024", "n": 1}, {"model": model, "prompt": prompt}):
+            try:
+                if body.get("size") and model.startswith("gpt-image"): body["quality"] = os.environ.get("OPENAI_IMAGE_QUALITY", "medium")
+                r = requests.post("https://api.openai.com/v1/images/generations", headers={"Authorization": f"Bearer {key}"}, json=body, timeout=240)
+                if not r.ok: last = f"{model}: {r.status_code} {r.text[:300]}"; continue
+                d = r.json()["data"][0]
+                raw = base64.b64decode(d["b64_json"]) if d.get("b64_json") else requests.get(d["url"], timeout=60).content
+                out.append((raw, str(p))); last = ""; break
+            except Exception as e:
+                last = f"{model}: {str(e)[:300]}"
+        if last: note = "image failed: " + last
     return out, note
 
 
 def to_webp(raw):
     try:
         from PIL import Image
-        im = Image.open(io.BytesIO(raw)).convert("RGB"); b = io.BytesIO(); im.save(b, "WEBP", quality=82); return b.getvalue(), "image/webp", "webp"
+        im = Image.open(io.BytesIO(raw)).convert("RGB"); b = io.BytesIO(); im.save(b, "WEBP", quality=82)
+        return b.getvalue(), "image/webp", "webp", im.size
     except Exception:
-        return raw, "image/png", "png"
+        return raw, "image/png", "png", (1536, 1024)
 
 
 def upload_media(w, raw, name, alt):
-    data, ctype, ext = to_webp(raw)
+    data, ctype, ext, size = to_webp(raw)
     r = requests.post(w.base + "/wp-json/wp/v2/media", auth=w.auth, timeout=120, data=data,
                       headers={"Content-Disposition": f'attachment; filename="{name}.{ext}"', "Content-Type": ctype})
     r.raise_for_status(); m = r.json()
     requests.post(f"{w.base}/wp-json/wp/v2/media/{m['id']}", auth=w.auth, timeout=60, json={"alt_text": alt, "title": alt[:80]})
-    return {"id": m["id"], "url": m["source_url"], "alt": alt}
+    return {"id": m["id"], "url": m["source_url"], "alt": alt, "w": size[0], "h": size[1]}
 
 
 def place_images(art, imgs):
     """Put image 1 after the intro, the others after the first paragraph of the 3rd and 5th section."""
     if not imgs: return art
     fig = lambda i: (f'<figure class="wp-block-image size-large"><img src="{i["url"]}" alt="{htmlmod.escape(i["alt"], True)}" '
-                     f'width="1536" height="1024" loading="lazy" /></figure>')
+                     f'width="{i.get("w", 1536)}" height="{i.get("h", 1024)}" loading="lazy" /></figure>')
     parts = re.split(r"(?i)(?=<h2[ >])", art); spots = {(0 if parts[0].strip() else 1): 0, 3: 1, 5: 2}; out = []
     for n, part in enumerate(parts):
         k = spots.get(n)
