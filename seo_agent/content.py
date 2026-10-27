@@ -116,11 +116,12 @@ def make_images(prompts, profile):
             body = {"model": IMG_MODEL, "prompt": style + str(p)[:600], "size": "1536x1024", "n": 1}
             if IMG_MODEL.startswith("gpt-image"): body["quality"] = os.environ.get("OPENAI_IMAGE_QUALITY", "medium")
             r = requests.post("https://api.openai.com/v1/images/generations", headers={"Authorization": f"Bearer {key}"}, json=body, timeout=240)
-            r.raise_for_status(); d = r.json()["data"][0]
+            if not r.ok: raise RuntimeError(f"{r.status_code} {r.text[:400]}")
+            d = r.json()["data"][0]
             raw = base64.b64decode(d["b64_json"]) if d.get("b64_json") else requests.get(d["url"], timeout=60).content
             out.append((raw, str(p)))
         except Exception as e:
-            note = f"image failed: {str(e)[:150]}"
+            note = f"image failed: {str(e)[:420]}"
     return out, note
 
 
