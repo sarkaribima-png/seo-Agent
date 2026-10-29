@@ -1,0 +1,24 @@
+name: competitor-watch
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "site id, or all"
+        default: "all"
+  schedule:
+    - cron: "30 4 * * 1"   # every Monday 10:00 IST
+permissions: {contents: read}
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -m seo_agent.watch "${{ github.event.inputs.site || 'all' }}"
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
