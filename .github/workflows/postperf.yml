@@ -1,0 +1,24 @@
+name: post-performance
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "site id"
+        default: "kalosa"
+  schedule:
+    - cron: "30 5 * * *"   # 11:00 IST daily
+permissions: {contents: read}
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -m seo_agent.postperf "${{ github.event.inputs.site || 'kalosa' }}"
+        env:
+          GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
