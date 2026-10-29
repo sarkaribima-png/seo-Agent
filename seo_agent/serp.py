@@ -13,7 +13,8 @@ def call(auth, keyword, device, location):
     task = {"keyword": keyword, "language_code": "en", "device": device, "depth": 10}
     for loc in ({"location_name": location}, {"location_code": INDIA}):
         r = requests.post(API, auth=auth, json=[{**task, **loc}], timeout=90)
-        r.raise_for_status(); j = r.json(); t = (j.get("tasks") or [{}])[0]
+        if not r.ok: raise RuntimeError(f"DataForSEO HTTP {r.status_code}: {r.text[:300]}")
+        j = r.json(); t = (j.get("tasks") or [{}])[0]
         if t.get("status_code") == 20000: return t
         if "location" not in str(t.get("status_message", "")).lower(): raise RuntimeError(f"DataForSEO: {t.get('status_code')} {t.get('status_message')}")
     raise RuntimeError("DataForSEO: location not accepted")
