@@ -33,18 +33,20 @@ RISKY = ["guarantee", "guaranteed", "100%", "painless", "scarless", "risk-free",
 
 def plain(html):
     import html as h
-    return h.unescape(re.sub(r"<[^>]+>", " ", html or "")).replace("\u00a0", " ")
+    return h.unescape(re.sub(r"<[^>]+>", " ", html or "")).replace(" ", " ")
 
 
 def lint(html, banned=(), medical=True):
     """Return a list of plain-language problems found in an HTML article."""
     t = plain(html); low = t.lower(); out = []
-    if re.search(r"[\u2014\u2013]|\s--\s", t): out.append("contains em or en dashes; use a period, comma or colon")
+    if re.search(r"[—–]|\s--\s", t): out.append("contains em or en dashes; use a period, comma or colon")
     for w in STOCK:
         if re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", low): out.append(f"uses AI-sounding phrase '{w}'")
     for rx, msg in PATTERNS:
         if re.search(rx, low): out.append(msg)
     if len(re.findall(r"<(strong|b)[ >]", html or "", re.I)) > 0: out.append("contains bold text; remove it")
+    if re.search(r"\b(book|schedule) (a |an |your )?(free )?(consultation|appointment)\b|\bcall us\b|\bcontact us\b|\bwhatsapp\b|\bget in touch\b", low):
+        out.append("has a call to action; the page template already has one")
     if re.search(r"<h1", html or "", re.I): out.append("contains an h1; use h2 and h3 only")
     for b in list(banned) + (RISKY if medical else []):
         if b and re.search(r"(?<![a-z0-9])" + re.escape(b.lower()) + r"(?![a-z0-9])", low): out.append(f"contains banned or risky term '{b}'")
