@@ -273,6 +273,8 @@ def compose_banner(raw, title, color, logo):
 
 def upload_media(w, raw, name, alt):
     data, ctype, ext, size = to_webp(raw)
+    if getattr(w, "static", False):
+        return {"id": name, "url": w.upload_image(data, f"{name}.{ext}"), "alt": alt, "w": size[0], "h": size[1]}
     r = requests.post(w.base + "/wp-json/wp/v2/media", auth=w.auth, timeout=120, data=data,
                       headers={"Content-Disposition": f'attachment; filename="{name}.{ext}"', "Content-Type": ctype})
     r.raise_for_status(); m = r.json()
@@ -325,15 +327,17 @@ def write_one(site, idea, w):
                 except Exception as e: note = f"banner text failed: {str(e)[:120]}"
             imgs.append(upload_media(w, b, f"{slug}-{n + 1}", (title if n == 0 else f"{idea['primary_keyword']}: {p}")[:120]))
         except Exception as e: note = f"upload failed: {str(e)[:150]}"
-    body = place_images(best["art"], imgs[1:] if FEATURED_MODE == "banner" else imgs); cat = pick_category(w, site)
+    body = place_images(best["art"], imgs[1:] if FEATURED_MODE == "banner" else imgs); cat = None if getattr(w, "static", False) else pick_category(w, site)
     mt, md = tag(t, "meta_title")[:70] or title, tag(t, "meta_description")[:170]
-    r = requests.post(w.base + "/wp-json/wp/v2/posts", auth=w.auth, timeout=90,
-                      json={"title": title, "content": body, "status": "draft", "slug": slug, "excerpt": md,
-                            **({"featured_media": imgs[0]["id"]} if (imgs and FEATURED_MODE == "banner") else {}), **({"categories": [cat]} if cat else {})})
-    r.raise_for_status(); wp_id = r.json()["id"]
-    try: w.set_seo(wp_id, mt, md)
-    except Exception as e: note = (note + " | " if note else "") + f"seo meta failed: {str(e)[:120]}"
-    if FEATURED_MODE != "banner": note = (note + " | " if note else "") + "Add the featured image in WordPress before approving"
+    if getattr(w, "static", False): wp_id = None   # plain HTML site: the page file is built and uploaded when the post is published
+    else:
+        r = requests.post(w.base + "/wp-json/wp/v2/posts", auth=w.auth, timeout=90,
+                          json={"title": title, "content": body, "status": "draft", "slug": slug, "excerpt": md,
+                                **({"featured_media": imgs[0]["id"]} if (imgs and FEATURED_MODE == "banner") else {}), **({"categories": [cat]} if cat else {})})
+        r.raise_for_status(); wp_id = r.json()["id"]
+        try: w.set_seo(wp_id, mt, md)
+        except Exception as e: note = (note + " | " if note else "") + f"seo meta failed: {str(e)[:120]}"
+    if FEATURED_MODE != "banner" and not getattr(w, "static", False): note = (note + " | " if note else "") + "Add the featured image in WordPress before approving"
     row = {"site_id": site["id"], "idea_id": idea["id"], "title": title, "slug": slug, "html": body, "meta_title": mt, "meta_description": md,
            "target_words": idea.get("word_count"), "words": best["words"], "grade": best["grade"], "issues": best["issues"] + ([note] if note else []),
            "images": imgs, "wp_post_id": wp_id, "status": "draft"}
@@ -356,12 +360,12 @@ def write(site_id):
             sb.update("content_ideas", {"id": idea["id"]}, {"status": "approved", "error": str(e)[:300]}); print("FAILED", idea["title"], e)
 
 
-def live_check(p, url):
+def live_check(p, url, static=False):
     """After publishing, open the live page and confirm the blog template and a single H1."""
     try:
         h = requests.get(url, params={"nc": os.urandom(3).hex()}, timeout=40).text
         probs = []
-        if TEMPLATE_MARKER not in h: probs.append("live page does not show the blog template")
+        if not static and TEMPLATE_MARKER not in h: probs.append("live page does not show the blog template")
         if len(re.findall(r"<h1[ >]", h, re.I)) != 1: probs.append("live page does not have exactly one H1")
         first = re.search(r"<h2[^>]*>(.*?)</h2>", p["html"], re.S | re.I)
         if first and htmlmod.unescape(re.sub(r"<[^>]+>", "", first.group(1))).strip()[:30] not in htmlmod.unescape(h): probs.append("post text not found on the live page")
@@ -377,13 +381,18 @@ def publish(site_id):
     if site["mode"] == "paused": return print("site paused")
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
     done = len(sb.select("content_posts", site_id=f"eq.{site_id}", status="eq.published", published_at=f"gte.{since}", select="id"))
-    room = int(site.get("posts_per_day") or 1) - done
+    room = int(1 if site.get("posts_per_day") is None else site["posts_per_day"]) - done
     if room <= 0: return print("daily post limit reached")
     for p in sb.select("content_posts", site_id=f"eq.{site_id}", status="eq.approved", order="approved_at.asc", limit=str(room)):
         if site.get("reviewer_required") and not p.get("reviewed_at"): print("skipped, not reviewed yet:", p["title"]); continue
         probs = lint(p["html"], site.get("banned_terms") or [], site.get("profile") == "medical")
         if probs: sb.update("content_posts", {"id": p["id"]}, {"status": "draft", "issues": probs}); print("sent back:", p["title"], probs); continue
         try:
+            if getattr(w, "static", False):
+                url, notes = w.publish_post(p)
+                sb.update("content_posts", {"id": p["id"]}, {"status": "published", "published_at": dt.datetime.now(dt.timezone.utc).isoformat(), "publish_url": url, "issues": (p.get("issues") or []) + notes})
+                if p.get("idea_id"): sb.update("content_ideas", {"id": p["idea_id"]}, {"status": "published"})
+                print("published:", p["title"], url, notes); live_check(p, url, static=True); continue
             if os.environ.get("FEATURED_REQUIRED", "1") == "1":
                 fm = requests.get(f"{w.base}/wp-json/wp/v2/posts/{p['wp_post_id']}", auth=w.auth, params={"context": "edit", "_fields": "featured_media"}, timeout=30).json().get("featured_media")
                 if not fm:
@@ -399,4 +408,4 @@ def publish(site_id):
 
 if __name__ == "__main__":
     from . import run as _r
-    _r.each(sys.argv[2], {"write": write, "publish": publish}[sys.argv[1]], kinds=("wordpress",))
+    _r.each(sys.argv[2], {"write": write, "publish": publish}[sys.argv[1]], kinds=("wordpress", "static", "html"))
