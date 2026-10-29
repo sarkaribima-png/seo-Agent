@@ -1,8 +1,16 @@
-import os, re, html, requests
+import os, re, html, json, requests
+def secret(name):
+    """A GitHub secret by name. Works for any site added later, as long as the secrets are named PREFIX_WP_USER / PREFIX_WP_APP_PASSWORD."""
+    v = os.environ.get(name)
+    if v: return v
+    try: return (json.loads(os.environ.get("SECRETS_JSON") or "{}")).get(name)
+    except ValueError: return None
 class WP:
     def __init__(self, site):
-        p = site["secrets_prefix"]; self.base = site["wp_base"].rstrip("/")
-        self.auth = (os.environ[f"{p}_WP_USER"], os.environ[f"{p}_WP_APP_PASSWORD"])
+        p = site.get("secrets_prefix") or site["id"].upper(); self.base = site["wp_base"].rstrip("/")
+        u, pw = secret(f"{p}_WP_USER"), secret(f"{p}_WP_APP_PASSWORD")
+        if not (u and pw): raise RuntimeError(f"Add the GitHub secrets {p}_WP_USER and {p}_WP_APP_PASSWORD for this site")
+        self.auth = (u, pw)
         self.api = self.base + "/wp-json/seo-agent/v1"
     def _req(self, m, path, **kw):
         r = requests.request(m, self.api + path, auth=self.auth, timeout=60, **kw)
@@ -48,3 +56,32 @@ class WP:
                 if r.status_code != 200 or not r.json(): break
                 ids += [x["id"] for x in r.json()]; n += 1
         return ids
+
+
+
+class Static:
+    """A plain HTML site (no WordPress). Read-only for now: audit, tracking and proposals work; changes are applied by the FTP step."""
+    static = True
+    def __init__(self, site): self.base = site["wp_base"].rstrip("/"); self.auth = None; self.api = ""
+    def live(self, url):
+        h = requests.get(url, params={"nc": os.urandom(3).hex()}, timeout=30, headers={"User-Agent": "Mozilla/5.0"}).text
+        g = lambda rx: (re.search(rx, h, re.S | re.I) or [None, ""])[1].strip()
+        clean = lambda s: html.unescape(re.sub(r"<[^>]+>", "", s)).strip()
+        meta = g(r'<meta[^>]+name=["\']description["\'][^>]*content=["\'](.*?)["\']') or g(r'<meta[^>]+content=["\'](.*?)["\'][^>]*name=["\']description["\']')
+        h2 = [clean(x) for x in re.findall(r"<h2[^>]*>(.*?)</h2>", h, re.S | re.I)]
+        return {"title": html.unescape(g(r"<title>(.*?)</title>")), "meta": html.unescape(meta), "h1": clean(g(r"<h1[^>]*>(.*?)</h1>")),
+                "h2": [x for x in h2 if x][:25], "post_id": ""}
+    def modified(self, url):
+        try:
+            lm = requests.head(url, timeout=20, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}).headers.get("Last-Modified")
+            if lm:
+                import email.utils; return email.utils.parsedate_to_datetime(lm).astimezone(__import__("datetime").timezone.utc).isoformat()
+        except Exception: pass
+        return None
+    def _no(self, *a, **k): raise RuntimeError("This is a plain HTML site. The agent cannot change its files yet (FTP step not set up). Apply the change by hand or set up the FTP step.")
+    set_seo = rollback = add_mod = rollback_mod = _no
+    def all_ids(self): return []
+
+
+def client(site):
+    return Static(site) if site.get("type") in ("static", "html") else WP(site)
