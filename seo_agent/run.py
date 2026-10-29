@@ -55,7 +55,6 @@ def apply_mod(site, row, w, p):
     sb.update("proposals", {"id": p["id"]}, {"status": "applied", "applied_at": now(), "backup_id": mid, "reason": p.get("reason")})
     print("applied", p["kind"], "proposal", p["id"], p["page"])
 def apply_approved(site, w):
-    if getattr(w, "static", False): return print("static site: approved changes wait for the FTP step (not set up yet)")
     row = sb.select("sites", id=f"eq.{site['id']}")[0]
     for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.approved", kind="in.(title_meta,schema,internal_link,content_add)"):
         try:
