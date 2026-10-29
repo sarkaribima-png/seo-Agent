@@ -26,6 +26,10 @@ class WP:
         return self._req("POST", f"/mod/{int(post_id)}", json={"kind": kind, **data})
     def rollback_mod(self, post_id, mod_id):
         return self._req("POST", f"/mod-rollback/{int(post_id)}", json={"mod_id": int(mod_id)})
+    def page_text(self, url):
+        h = requests.get(url, params={"nc": os.urandom(3).hex()}, timeout=30, headers={"User-Agent": "Mozilla/5.0"}).text
+        h = re.sub(r"(?is)<(script|style|noscript|nav|header|footer)[^>]*>.*?</\1>", " ", h)
+        return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", h)))
     def mod_visible(self, url, mod_id, tries=4):
         import time
         for i in range(tries):
