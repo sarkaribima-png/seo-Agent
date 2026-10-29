@@ -15,21 +15,47 @@ def pick(c, site):
 def applied_last_day(site_id):
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
     return len(sb.select("proposals", site_id=f"eq.{site_id}", status="eq.applied", applied_at=f"gte.{since}"))
+MODKINDS = {"schema": lambda n: {"json_ld": n["json_ld"]}, "internal_link": lambda n: {"anchor": n["anchor"], "url": n["url"]},
+            "content_add": lambda n: {"html": n["html"]}}
+PLUGIN_KIND = {"schema": "schema", "internal_link": "link", "content_add": "section"}
+def apply_mod(site, row, w, p):
+    """Schema / link / section: add through the plugin, then check it really shows on the live page. If not, undo it."""
+    if p["kind"] == "content_add" and row.get("reviewer_required") and not p.get("reviewed_by"):
+        return print("waiting for reviewer on proposal", p["id"], "(Mark as reviewed in the dashboard)")
+    if not p.get("post_id"): raise RuntimeError("no post id for this page")
+    r = w.add_mod(p["post_id"], PLUGIN_KIND[p["kind"]], MODKINDS[p["kind"]](p["new"])); mid = r["mod_id"]
+    if not w.mod_visible(p["page"], mid):
+        w.rollback_mod(p["post_id"], mid)
+        raise RuntimeError("change was saved but did not show on the live page (cache, or the text was not found). It was removed again.")
+    sb.update("proposals", {"id": p["id"]}, {"status": "applied", "applied_at": now(), "backup_id": mid, "reason": p.get("reason")})
+    print("applied", p["kind"], "proposal", p["id"], p["page"])
 def apply_approved(site, w):
-    for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.approved", kind="eq.title_meta"):
+    row = sb.select("sites", id=f"eq.{site['id']}")[0]
+    for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.approved", kind="in.(title_meta,schema,internal_link,content_add)"):
         try:
-            r = w.set_seo(p["post_id"], p["new"]["title"], p["new"]["meta"])
-            sb.update("proposals", {"id": p["id"]}, {"status": "applied", "applied_at": now(), "backup_id": r.get("backup_id")})
-            print("applied approved proposal", p["id"], p["page"])
+            if p["kind"] == "title_meta":
+                r = w.set_seo(p["post_id"], p["new"]["title"], p["new"]["meta"])
+                sb.update("proposals", {"id": p["id"]}, {"status": "applied", "applied_at": now(), "backup_id": r.get("backup_id")})
+                print("applied approved proposal", p["id"], p["page"])
+            else: apply_mod(site, row, w, p)
         except Exception as e:
             sb.update("proposals", {"id": p["id"]}, {"status": "failed", "reason": str(e)[:300]}); print("FAILED", p["id"], e)
+def apply_rollbacks(site, w):
+    for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.rollback_requested"):
+        try:
+            if p["kind"] == "title_meta": w.rollback(p["post_id"], p["backup_id"])
+            else: w.rollback_mod(p["post_id"], p["backup_id"])
+            sb.update("proposals", {"id": p["id"]}, {"status": "rolled_back"})
+            print("rolled back proposal", p["id"], p["page"])
+        except Exception as e:
+            sb.update("proposals", {"id": p["id"]}, {"status": "failed", "reason": "rollback: " + str(e)[:250]}); print("ROLLBACK FAILED", p["id"], e)
 def daily(site_id):
     from . import gsc, wp, propose
     site = sites()[site_id]; row = ensure_site(site); mode = row["mode"]
     if mode == "paused": return print("site paused from dashboard")
     c = db.conn(); w = wp.WP(site)
     rows = gsc.pull(c, site); sb.upsert("gsc_daily", rows, "site_id,date,page,device"); print("gsc rows:", len(rows))
-    apply_approved(site, w)
+    apply_rollbacks(site, w); apply_approved(site, w)
     if applied_last_day(site_id) >= row["daily_page_limit"]: return print("daily limit reached")
     t = pick(c, site)
     if not t: return print("no candidate page")
@@ -65,7 +91,7 @@ def audit_all(site_id):
 def rollback(site_id, proposal_id):
     from . import wp
     p = sb.select("proposals", id=f"eq.{proposal_id}")[0]; w = wp.WP(sites()[site_id])
-    w.rollback(p["post_id"], p["backup_id"]); sb.update("proposals", {"id": proposal_id}, {"status": "rolled_back"}); print("rolled back", proposal_id)
+    (w.rollback if p["kind"] == "title_meta" else w.rollback_mod)(p["post_id"], p["backup_id"]); sb.update("proposals", {"id": proposal_id}, {"status": "rolled_back"}); print("rolled back", proposal_id)
 if __name__ == "__main__":
     cmd = sys.argv[1]
     {"daily": lambda: daily(sys.argv[2]), "audit-all": lambda: audit_all(sys.argv[2]),
