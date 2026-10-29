@@ -20,6 +20,18 @@ class WP:
         return self._req("POST", f"/seo/{int(post_id)}", json={"title": title, "description": meta})
     def rollback(self, post_id, backup_id):
         return self._req("POST", f"/rollback/{int(post_id)}", json={"backup_id": int(backup_id)})
+    def add_mod(self, post_id, kind, data):
+        return self._req("POST", f"/mod/{int(post_id)}", json={"kind": kind, **data})
+    def rollback_mod(self, post_id, mod_id):
+        return self._req("POST", f"/mod-rollback/{int(post_id)}", json={"mod_id": int(mod_id)})
+    def mod_visible(self, url, mod_id, tries=4):
+        import time
+        for i in range(tries):
+            try:
+                if f'data-sab="{int(mod_id)}"' in requests.get(url, params={"nc": os.urandom(3).hex()}, timeout=30, headers={"User-Agent": "Mozilla/5.0"}).text: return True
+            except requests.RequestException: pass
+            time.sleep(5)
+        return False
     def all_ids(self):
         ids = []
         for kind in ("pages", "posts"):
