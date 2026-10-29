@@ -101,13 +101,13 @@ Reply JSON only, this exact shape:
  "content_gaps":[{"topic":"subject competitors cover and OWN lacks"}],
  "content_briefs":[{"topic":"","points":["facts-free outline points to cover"]}],
  "schema":[{"schema_type":"FAQPage|MedicalWebPage|BreadcrumbList|Article|...","rationale":"","json_ld":{"@context":"https://schema.org","@type":""}}],
- "internal_links":[{"link_to_url":"must be one of CANDIDATES","anchor_text":"2-5 natural words","placement_context":"which section of OWN it fits"}],
+ "internal_links":[{"link_to_url":"must be one of CANDIDATES","anchor_text":"2-5 words copied EXACTLY as they already appear in OWN text_start, not a rewrite","placement_context":"which section of OWN it fits"}],
  "confidence":"low|medium|high","missing_data":["what you could not see"]}
 Max 6 recommendations, 4 content_gaps, 2 content_briefs, 3 schema items (only types OWN lacks; json_ld must use only facts visible in OWN text; FAQPage only if you can write answers from OWN text), 5 internal_links."""
 
 
 def digest(p):
-    return {k: p[k] for k in ("url", "title", "meta", "h1", "h2", "h3", "words", "images", "images_no_alt", "internal_links", "tables", "lists", "schema", "has_faq")} | {"text_start": p["text"][:2500]}
+    return {k: p[k] for k in ("url", "title", "meta", "h1", "h2", "h3", "words", "images", "images_no_alt", "internal_links", "tables", "lists", "schema", "has_faq")} | {"text_start": p["text"][:6000]}
 
 
 def audit(keyword, own_url, competitor_urls, candidates, niche="", ask=None):
@@ -128,5 +128,5 @@ def audit(keyword, own_url, competitor_urls, candidates, niche="", ask=None):
         "confidence": d.get("confidence", "medium"), "missing_data": missing + d.get("missing_data", []),
         "audit": {"schema_analysis": [{"url": own_url, "schema": own["schema"]}],
                   "schema_recommendations": [{"url": own_url, "recommendations": d.get("schema", [])}],
-                  "internal_link_suggestions": [{"url": own_url, "suggestions": [s for s in d.get("internal_links", []) if norm(s.get("link_to_url")) in allowed]}],
+                  "internal_link_suggestions": [{"url": own_url, "suggestions": [s for s in d.get("internal_links", []) if norm(s.get("link_to_url")) in allowed and (s.get("anchor_text") or "").strip().lower() in own["text_lower"]]}],
                   "page_comparison": {"content_gaps": [{**g, "missing_on": [own_url]} for g in d.get("content_gaps", [])]}}}
