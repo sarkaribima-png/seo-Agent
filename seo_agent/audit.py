@@ -6,17 +6,30 @@ import requests
 from bs4 import BeautifulSoup
 
 MODEL = os.environ.get("AUDIT_MODEL", "claude-haiku-5-5")
-UA = {"User-Agent": "Mozilla/5.0 (compatible; KalosaSEOAudit/1.0)"}
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 
 
 def norm(u): return (u or "").split("#")[0].rstrip("/").lower()
 def host(u): return urlparse(u).netloc.lower().replace("www.", "")
 
 
+AGENTS = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+          "python-requests/2.31"]
+
+
 def fetch(url):
-    r = requests.get(url, headers=UA, timeout=30)
-    if r.status_code != 200 or "html" not in r.headers.get("content-type", "html"): raise RuntimeError(f"{url} returned {r.status_code}")
-    return r.text
+    import time
+    last = ""
+    for i in range(4):
+        ua = AGENTS[i % len(AGENTS)]
+        try:
+            r = requests.get(url, headers={"User-Agent": ua, "Accept": "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9"}, timeout=40)
+            if r.status_code == 200 and "html" in r.headers.get("content-type", "html"): return r.text
+            last = f"returned {r.status_code}"
+        except requests.RequestException as e: last = str(e)[:80]
+        time.sleep(4 * (i + 1))
+    raise RuntimeError(f"{url} {last} after 4 tries (site may be blocking the agent; try again in a few minutes)")
 
 
 def jsonld_types(soup):
