@@ -6,24 +6,33 @@ on:
       command:
         description: "daily | audit-all | rollback"
         default: "daily"
+      site:
+        description: "site id, or all"
+        default: "all"
       proposal_id:
         description: "proposal id (only for rollback)"
         default: ""
 permissions: {contents: write}
 jobs:
-  kalosa:
+  agent:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
-      - run: python -m seo_agent.run ${{ github.event.inputs.command || 'daily' }} kalosa ${{ github.event.inputs.proposal_id }}
+      - name: Run
+        run: |
+          if [ "${{ github.event.inputs.command }}" = "rollback" ]; then
+            python -m seo_agent.run rollback x "${{ github.event.inputs.proposal_id }}"
+          else
+            python -m seo_agent.run "${{ github.event.inputs.command || 'daily' }}" "${{ github.event.inputs.site || 'all' }}"
+          fi
         env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
           GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          KALOSA_WP_USER: ${{ secrets.KALOSA_WP_USER }}
-          KALOSA_WP_APP_PASSWORD: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       - run: |
