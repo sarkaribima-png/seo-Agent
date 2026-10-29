@@ -1,0 +1,29 @@
+name: rank-page
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "site id"
+        default: "kalosa"
+  schedule:
+    - cron: "30 5 * * *"   # 11:00 IST: pick up any queued or unfinished rank jobs
+permissions: {contents: read}
+jobs:
+  rank:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -m seo_agent.rank "${{ github.event.inputs.site || 'kalosa' }}"
+        env:
+          GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KALOSA_WP_USER: ${{ secrets.KALOSA_WP_USER }}
+          KALOSA_WP_APP_PASSWORD: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          AUDIT_TOOL_URL: ${{ secrets.AUDIT_TOOL_URL }}
+          AUDIT_TOOL_KEY: ${{ secrets.AUDIT_TOOL_KEY }}
