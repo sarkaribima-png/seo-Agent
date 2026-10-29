@@ -3,8 +3,8 @@ on:
   workflow_dispatch:
     inputs:
       site:
-        description: "site id"
-        default: "kalosa"
+        description: "site id, or all"
+        default: "all"
   schedule:
     - cron: "0 5 * * 1"   # every Monday 10:30 IST
 permissions: {contents: read}
@@ -17,8 +17,9 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
-      - run: python -m seo_agent.serp "${{ github.event.inputs.site || 'kalosa' }}"
+      - run: python -m seo_agent.serp "${{ github.event.inputs.site || 'all' }}"
         env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           DATAFORSEO_LOGIN: ${{ secrets.DATAFORSEO_LOGIN }}
