@@ -25,7 +25,7 @@ def top_pages(cfg, own, n=12):
     from . import gsc, wp
     s = gsc.service(); end = dt.date.today() - dt.timedelta(days=2); start = end - dt.timedelta(days=28)
     rows = s.searchanalytics().query(siteUrl=cfg["gsc_property"], body={"startDate": str(start), "endDate": str(end), "dimensions": ["page"], "rowLimit": 60}).execute().get("rows", [])
-    rows.sort(key=lambda r: -r["impressions"]); w = wp.WP(cfg); out = []
+    rows.sort(key=lambda r: -r["impressions"]); w = wp.client(cfg); out = []
     for r in rows:
         u = r["keys"][0]
         if norm(u) == norm(own) or urlparse(u).path.strip("/") == "" or "?" in u: continue
@@ -143,7 +143,7 @@ def run(site_id):
     from . import run as runmod, wp
     cfg = runmod.sites()[site_id]; site = runmod.ensure_site(cfg)
     if site["mode"] == "paused": return print("site paused")
-    w = wp.WP(cfg)
+    w = wp.client(cfg)
     jobs = sb.select("rank_jobs", site_id=f"eq.{site_id}", status="in.(queued,auditing)", order="created_at.asc", limit=str(JOBS_PER_RUN))
     if not jobs: return print("no rank jobs waiting")
     for job in jobs:
@@ -160,4 +160,5 @@ def run(site_id):
 
 
 if __name__ == "__main__":
-    run(sys.argv[1])
+    from . import run as _r
+    _r.each(sys.argv[1], run)
