@@ -16,6 +16,9 @@ IMG_STYLE = {"medical": "Photorealistic editorial photograph, natural window lig
              "default": "Photorealistic editorial photograph, natural light, soft palette, shallow depth of field, high detail. "
                         "No text, no letters, no logos, no watermarks. Scene: "}
 BANNER_NOTE = " Composition: main subject on the right side of the frame; keep the left 45 percent calm, soft and uncluttered for a headline."
+FEATURED_MODE = os.environ.get("FEATURED_MODE", "none")   # none: you add the featured image yourself | banner: agent makes a title banner
+IMAGE_COUNT = int(os.environ.get("IMAGE_COUNT", "2"))      # photos placed inside the post
+TEMPLATE_MARKER = os.environ.get("TEMPLATE_MARKER", "kb-content")
 CAPTION = os.environ.get("IMAGE_CAPTION", "Illustrative image")
 CAPTION_HTML = f"<figcaption>{CAPTION}</figcaption>" if CAPTION else ""
 FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Bold.ttf"
@@ -26,21 +29,25 @@ term is needed, say it once and explain it in plain words in the same sentence. 
 RHYTHM: mostly short sentences, but mix lengths on purpose. Add a few sentences of 14 to 20 words and a few of 3 to 6 words. Use contractions (it's, don't, you'll) now and then. Use small everyday examples. Do not make every sentence the same shape.
 STRUCTURE: the first two sentences answer the main question of the post. Then 4 to 7 sections, each with an h2 heading (h3 allowed).
 Use the primary keyword in the first 100 words and in one h2. Use secondary keywords where they fit naturally. No stuffing.
-End with a short FAQ section (h2 'Frequently asked questions' with h3 questions and short answers) and then a short, calm line about
+End with a short FAQ section (h2 'Frequently asked questions' with h3 class="kb-no-toc" questions and short answers) and then a short, calm line about
 what to do next (for health topics: talk to a qualified doctor who can examine you). No summary closer.
 FACTS: use only the facts supplied in 'brain' or very general, well known knowledge stated carefully. Never invent numbers, prices,
 percentages, timelines, studies, awards, rankings or patient stories. For cost topics explain what changes the price, not a price.
 Never promise results. Say once, plainly, that results and risks differ from person to person and a doctor must assess each case.
 Never name competitors. Mention the clinic or doctor at most once and only with facts from 'brain'.
 The post is ORIGINAL. You only know the topic and keywords, never copy anyone's wording.
-FORMAT: HTML only inside <article>: h2, h3, p, ul, li. No h1, no bold, no tables, no inline styles, no emojis.
+PAGE TEMPLATE: the website page already shows the title, a table of contents, a consultation form, a call-to-action, the author box and related
+posts. Do NOT write any call-to-action, 'book now', 'call us', contact details, author bio, table of contents or links to other posts.
+FORMAT: HTML only inside <article>: h2, h3, p, ul, ol, li, and when useful ONE table and ONE blockquote. Table: a header row, 2 to 4 columns,
+only to compare options or factors in plain words, no numbers unless they are in 'brain'. Blockquote: one key point or safety note, 1 to 2 sentences.
+The FAQ questions must be written as <h3 class="kb-no-toc">. No h1, no bold, no inline styles, no emojis.
 """ + RULES + """
 OUTPUT, exactly these tags and nothing else:
 <meta_title>30-60 characters, contains the primary keyword</meta_title>
 <meta_description>110-155 characters, plain, gives a reason to click, no claims</meta_description>
 <slug>short-lowercase-slug</slug>
 <image_prompts>["scene 1: wide calm lifestyle photo related to the topic","scene 2","scene 3"]</image_prompts>
-IMAGE SCENES (photo ideas, decided by the topic): scene 1 is the banner. If the topic is about a body area or a cosmetic procedure, scene 1 is a clothed close-up of that area (for example torso in a plain sports top, waist and hips in plain leggings, side profile of the face), calm, no examination, no scars. Otherwise scene 1 is a calm lifestyle photo. Scenes 2 and 3 are ordinary life (a person resting at home, a bright kitchen, a doctor and patient talking at a desk). Never before-and-after, never an operation.
+IMAGE SCENES (photo ideas, decided by the topic): scene 1 goes near the top of the post. If the topic is about a body area or a cosmetic procedure, scene 1 is a clothed close-up of that area (for example torso in a plain sports top, waist and hips in plain leggings, side profile of the face), calm, no examination, no scars. Otherwise scene 1 is a calm lifestyle photo. The other scenes are ordinary life (a person resting at home, a bright kitchen, a doctor and patient talking at a desk). Never before-and-after, never an operation.
 <article>...</article>"""
 
 
@@ -164,9 +171,10 @@ def make_images(prompts, profile):
     if not model: return [], why
     print("image model:", model)
     style = IMG_STYLE["medical"] if profile == "medical" else IMG_STYLE["default"]; out, note = [], ""
-    for idx, p in enumerate(prompts[:3]):
-        prompt = style + str(p)[:600] + (BANNER_NOTE if idx == 0 else ""); last = ""
-        quality = os.environ.get("OPENAI_IMAGE_QUALITY_BANNER", "high") if idx == 0 else os.environ.get("OPENAI_IMAGE_QUALITY", "medium")
+    banner = FEATURED_MODE == "banner"
+    for idx, p in enumerate(prompts[:(3 if banner else IMAGE_COUNT)]):
+        prompt = style + str(p)[:600] + (BANNER_NOTE if (banner and idx == 0) else ""); last = ""
+        quality = os.environ.get("OPENAI_IMAGE_QUALITY_BANNER", "high") if (banner and idx == 0) else os.environ.get("OPENAI_IMAGE_QUALITY", "medium" if banner else "high")
         for body in ({"model": model, "prompt": prompt, "size": "1536x1024", "n": 1}, {"model": model, "prompt": prompt}):
             try:
                 if body.get("size") and model.startswith("gpt-image"): body["quality"] = quality
@@ -179,7 +187,7 @@ def make_images(prompts, profile):
                 last = f"{model}: {str(e)[:300]}"
         if last and ("moderation" in last.lower() or "safety" in last.lower()):
             try:
-                body = {"model": model, "prompt": style + "A calm adult in everyday clothes resting in a bright room at home, face turned slightly away." + (BANNER_NOTE if idx == 0 else "")}
+                body = {"model": model, "prompt": style + "A calm adult in everyday clothes resting in a bright room at home, face turned slightly away." + (BANNER_NOTE if (banner and idx == 0) else "")}
                 r = requests.post("https://api.openai.com/v1/images/generations", headers={"Authorization": f"Bearer {key}"}, json=body, timeout=240)
                 if r.ok:
                     d = r.json()["data"][0]; raw = base64.b64decode(d["b64_json"]) if d.get("b64_json") else requests.get(d["url"], timeout=60).content
@@ -287,6 +295,21 @@ def place_images(art, imgs):
     return "".join(out)
 
 
+def pick_category(w, site):
+    """Use sites.post_category if set, otherwise the category most of the latest posts already use."""
+    try:
+        want = (site.get("post_category") or "").strip().lower()
+        if want:
+            for c in requests.get(w.base + "/wp-json/wp/v2/categories", auth=w.auth, timeout=30, params={"search": want, "per_page": 20, "_fields": "id,slug,name"}).json():
+                if want in (c["slug"].lower(), c["name"].lower()): return c["id"]
+        from collections import Counter
+        posts = requests.get(w.base + "/wp-json/wp/v2/posts", auth=w.auth, timeout=30, params={"per_page": 40, "status": "publish", "_fields": "categories"}).json()
+        cnt = Counter(c for p in posts for c in p.get("categories", []) if c != 1)
+        return cnt.most_common(1)[0][0] if cnt else None
+    except Exception:
+        return None
+
+
 def write_one(site, idea, w):
     brain = brain_context(site["id"], site.get("profile"))
     best = draft_article(site, idea, brain); t = best["t"]
@@ -297,19 +320,20 @@ def write_one(site, idea, w):
     title = idea["title"]; logo = fetch_logo(site["id"]); color = site.get("brand_color") or "#2563eb"
     for n, (b, p) in enumerate(raw):
         try:
-            if n == 0:
+            if n == 0 and FEATURED_MODE == "banner":
                 try: b = compose_banner(b, title, color, logo)
                 except Exception as e: note = f"banner text failed: {str(e)[:120]}"
             imgs.append(upload_media(w, b, f"{slug}-{n + 1}", (title if n == 0 else f"{idea['primary_keyword']}: {p}")[:120]))
         except Exception as e: note = f"upload failed: {str(e)[:150]}"
-    body = place_images(best["art"], imgs[1:])
+    body = place_images(best["art"], imgs[1:] if FEATURED_MODE == "banner" else imgs); cat = pick_category(w, site)
     mt, md = tag(t, "meta_title")[:70] or title, tag(t, "meta_description")[:170]
     r = requests.post(w.base + "/wp-json/wp/v2/posts", auth=w.auth, timeout=90,
                       json={"title": title, "content": body, "status": "draft", "slug": slug, "excerpt": md,
-                            **({"featured_media": imgs[0]["id"]} if imgs else {})})
+                            **({"featured_media": imgs[0]["id"]} if (imgs and FEATURED_MODE == "banner") else {}), **({"categories": [cat]} if cat else {})})
     r.raise_for_status(); wp_id = r.json()["id"]
     try: w.set_seo(wp_id, mt, md)
     except Exception as e: note = (note + " | " if note else "") + f"seo meta failed: {str(e)[:120]}"
+    if FEATURED_MODE != "banner": note = (note + " | " if note else "") + "Add the featured image in WordPress before approving"
     row = {"site_id": site["id"], "idea_id": idea["id"], "title": title, "slug": slug, "html": body, "meta_title": mt, "meta_description": md,
            "target_words": idea.get("word_count"), "words": best["words"], "grade": best["grade"], "issues": best["issues"] + ([note] if note else []),
            "images": imgs, "wp_post_id": wp_id, "status": "draft"}
@@ -332,6 +356,21 @@ def write(site_id):
             sb.update("content_ideas", {"id": idea["id"]}, {"status": "approved", "error": str(e)[:300]}); print("FAILED", idea["title"], e)
 
 
+def live_check(p, url):
+    """After publishing, open the live page and confirm the blog template and a single H1."""
+    try:
+        h = requests.get(url, params={"nc": os.urandom(3).hex()}, timeout=40).text
+        probs = []
+        if TEMPLATE_MARKER not in h: probs.append("live page does not show the blog template")
+        if len(re.findall(r"<h1[ >]", h, re.I)) != 1: probs.append("live page does not have exactly one H1")
+        first = re.search(r"<h2[^>]*>(.*?)</h2>", p["html"], re.S | re.I)
+        if first and htmlmod.unescape(re.sub(r"<[^>]+>", "", first.group(1))).strip()[:30] not in htmlmod.unescape(h): probs.append("post text not found on the live page")
+        note = "live check: " + ("ok" if not probs else "; ".join(probs)); print(note)
+        sb.update("content_posts", {"id": p["id"]}, {"issues": (p.get("issues") or []) + [note]})
+    except Exception as e:
+        print("live check failed:", str(e)[:150])
+
+
 def publish(site_id):
     from . import run, wp
     cfg = run.sites()[site_id]; site = run.ensure_site(cfg); w = wp.WP(cfg)
@@ -345,10 +384,15 @@ def publish(site_id):
         probs = lint(p["html"], site.get("banned_terms") or [], site.get("profile") == "medical")
         if probs: sb.update("content_posts", {"id": p["id"]}, {"status": "draft", "issues": probs}); print("sent back:", p["title"], probs); continue
         try:
+            if os.environ.get("FEATURED_REQUIRED", "1") == "1":
+                fm = requests.get(f"{w.base}/wp-json/wp/v2/posts/{p['wp_post_id']}", auth=w.auth, params={"context": "edit", "_fields": "featured_media"}, timeout=30).json().get("featured_media")
+                if not fm:
+                    sb.update("content_posts", {"id": p["id"]}, {"error": "Featured image missing. Add it in WordPress; the post will publish at the next run."}); print("skipped, no featured image:", p["title"]); continue
             r = requests.post(f"{w.base}/wp-json/wp/v2/posts/{p['wp_post_id']}", auth=w.auth, json={"status": "publish"}, timeout=60); r.raise_for_status()
             sb.update("content_posts", {"id": p["id"]}, {"status": "published", "published_at": dt.datetime.now(dt.timezone.utc).isoformat(), "publish_url": r.json().get("link")})
             if p.get("idea_id"): sb.update("content_ideas", {"id": p["idea_id"]}, {"status": "published"})
             print("published:", p["title"], r.json().get("link"))
+            live_check(p, r.json().get("link"))
         except Exception as e:
             sb.update("content_posts", {"id": p["id"]}, {"error": str(e)[:300]}); print("PUBLISH FAILED", p["title"], e)
 
