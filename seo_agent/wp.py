@@ -5,7 +5,9 @@ class WP:
         self.auth = (os.environ[f"{p}_WP_USER"], os.environ[f"{p}_WP_APP_PASSWORD"])
         self.api = self.base + "/wp-json/seo-agent/v1"
     def _req(self, m, path, **kw):
-        r = requests.request(m, self.api + path, auth=self.auth, timeout=60, **kw); r.raise_for_status(); return r.json()
+        r = requests.request(m, self.api + path, auth=self.auth, timeout=60, **kw)
+        if not r.ok: raise RuntimeError(f"WordPress {r.status_code} on {path}: {r.text[:200]}")
+        return r.json()
     def live(self, url):
         h = requests.get(url, params={"nc": os.urandom(3).hex()}, timeout=30).text
         g = lambda rx: (re.search(rx, h, re.S | re.I) or [None, ""])[1].strip()
