@@ -9,8 +9,8 @@ on:
         description: "write | publish"
         default: "write"
       site:
-        description: "site id"
-        default: "kalosa"
+        description: "site id, or all"
+        default: "all"
 permissions: {contents: read}
 jobs:
   posts:
@@ -26,8 +26,9 @@ jobs:
           if [ -z "$CMD" ]; then
             if [ "${{ github.event.schedule }}" = "0 14 * * *" ]; then CMD=publish; else CMD=write; fi
           fi
-          python -m seo_agent.content "$CMD" "${{ github.event.inputs.site || 'kalosa' }}"
+          python -m seo_agent.content "$CMD" "${{ github.event.inputs.site || 'all' }}"
         env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           KALOSA_WP_USER: ${{ secrets.KALOSA_WP_USER }}
