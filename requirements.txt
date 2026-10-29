@@ -6,3 +6,4 @@ anthropic
 pytest
 beautifulsoup4
 pillow
+paramiko
