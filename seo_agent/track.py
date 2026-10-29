@@ -18,6 +18,7 @@ def pull(s, prop, kw, page, days):
 
 def modified(w, page):
     """When WordPress says this page was last edited (catches manual edits too)."""
+    if getattr(w, "static", False): return w.modified(page)
     try:
         pid = w.live(page).get("post_id")
         if not pid: return None
@@ -33,7 +34,7 @@ def run(site_id):
     cfg = runmod.sites()[site_id]; site = runmod.ensure_site(cfg)
     kws = sb.select("tracked_keywords", site_id=f"eq.{site_id}", active="eq.true")
     if not kws: return print("no tracked keywords")
-    s = gsc.service(); w = wp.WP(cfg); prop = site.get("gsc_property") or cfg["gsc_property"]; seen = set()
+    s = gsc.service(); w = wp.client(cfg); prop = site.get("gsc_property") or cfg["gsc_property"]; seen = set()
     for k in kws:
         have = sb.select("rank_daily", site_id=f"eq.{site_id}", keyword=f"eq.{k['keyword']}", select="day", limit="1")
         try: rows = pull(s, prop, k["keyword"], k.get("page_url"), 10 if have else 90)
@@ -49,4 +50,5 @@ def run(site_id):
 
 
 if __name__ == "__main__":
-    run(sys.argv[1])
+    from . import run as _r
+    _r.each(sys.argv[1], run)
