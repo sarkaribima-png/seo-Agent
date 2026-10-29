@@ -45,7 +45,9 @@ def top_pages(cfg, own, n=12):
 
 
 def start_audit(job, cfg):
-    cands = top_pages(cfg, job["page_url"])
+    try: cands = top_pages(cfg, job["page_url"])
+    except Exception as e:
+        print("WARNING: Google Search Console not readable, audit runs without internal-link candidates:", str(e)[:120]); cands = []
     pages = [{"url": job["page_url"], "is_own_page": True}] + [{"url": u} for u in (job.get("competitor_urls") or [])]
     body = {"target_keyword": job["keyword"], "pages": pages, "industry": cfg.get("niche") or "healthcare"}
     if cands: body["internal_link_candidates"] = cands
