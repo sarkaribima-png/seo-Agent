@@ -48,4 +48,5 @@ def run(site_id):
 
 
 if __name__ == "__main__":
-    run(sys.argv[1])
+    from . import run as _r
+    _r.each(sys.argv[1], run)
