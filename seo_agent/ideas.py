@@ -17,6 +17,8 @@ Rules:
 - If the profile is medical, finance or legal: skip topics that need promises of results or before/after proof.
 - Avoid ideas already listed in existing_keywords. Prefer lower keyword difficulty and higher volume.
 - 'why' is one short plain sentence on why this topic is worth writing.
+- If there is no competitor data, use seed_keywords (our own tracked keywords and real search queries) and the niche: pick topics people really search
+  for, as plain search phrases, and do not repeat existing_titles. source_url stays "".
 Reply with a JSON array only: [{"title":"","primary_keyword":"","secondary_keywords":[],"post_type":"","intent":"","source_url":"","why":""}]"""
 
 
@@ -59,7 +61,14 @@ def run(site_id):
     site = (sb.select("sites", id=f"eq.{site_id}") or [None])[0]
     if not site: return print("unknown site", site_id)
     pages, kws = page_candidates(site_id), keyword_candidates(site_id)
-    if not pages and not kws: return print("no competitor data imported yet")
+    seed = []
+    if not pages and not kws:   # no competitor data: use the site's own niche, tracked keywords and Search Console queries
+        seed = [r["keyword"] for r in sb.select("tracked_keywords", site_id=f"eq.{site_id}", select="keyword", limit="60")]
+        try:
+            from . import gsc
+            seed += gsc.site_queries(site)
+        except Exception as e: print("search console queries skipped:", str(e)[:120])
+        if not (site.get("niche") or site.get("profile") or seed): return print("no niche or data for this site yet")
     comps = {r["competitor"] for r in sb.select("competitor_pages", site_id=f"eq.{site_id}", select="competitor")}
     comps |= {r["competitor"] for r in sb.select("competitor_keywords", site_id=f"eq.{site_id}", select="competitor")}
     names = set()   # 7-letter pieces of each competitor host, so "dr molchugh" is caught too
@@ -69,7 +78,7 @@ def run(site_id):
     existing = {r["primary_keyword"].lower() for r in sb.select("content_ideas", site_id=f"eq.{site_id}", select="primary_keyword")}
     msg = {"site": {"niche": site.get("niche"), "profile": site.get("profile"), "brand_voice": site.get("brand_voice"),
                     "banned_terms": site.get("banned_terms")},
-           "competitor_pages": pages, "competitor_keywords": kws, "existing_keywords": sorted(existing)[:200], "how_many": MAX_IDEAS}
+           "competitor_pages": pages, "competitor_keywords": kws, "seed_keywords": seed, "existing_titles": [r["title"] for r in sb.select("content_posts", site_id=f"eq.{site_id}", select="title", limit="200")], "existing_keywords": sorted(existing)[:200], "how_many": MAX_IDEAS}
     r = anthropic.Anthropic().messages.create(model=os.environ.get("SEO_MODEL", "claude-haiku-5-5"), max_tokens=12000, system=SYS,
                                               messages=[{"role": "user", "content": json.dumps(msg)}])
     t = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
@@ -94,4 +103,4 @@ def run(site_id):
 
 if __name__ == "__main__":
     from . import run as _r
-    _r.each(sys.argv[1], run, kinds=("wordpress",))
+    _r.each(sys.argv[1], run, kinds=("wordpress", "static", "html"))
