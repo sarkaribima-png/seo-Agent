@@ -23,10 +23,14 @@ def apply_mod(site, row, w, p):
     if p["kind"] == "content_add" and row.get("reviewer_required") and not p.get("reviewed_by"):
         return print("waiting for reviewer on proposal", p["id"], "(Mark as reviewed in the dashboard)")
     if not p.get("post_id"): raise RuntimeError("no post id for this page")
+    if p["kind"] == "internal_link":
+        a = p["new"]["anchor"].strip().lower()
+        if a not in w.page_text(p["page"]).lower():
+            raise RuntimeError(f"The words '{p['new']['anchor']}' are not in the text of this page, so there is nothing to link. Nothing was changed. Run a new audit to get a link that fits.")
     r = w.add_mod(p["post_id"], PLUGIN_KIND[p["kind"]], MODKINDS[p["kind"]](p["new"])); mid = r["mod_id"]
     if not w.mod_visible(p["page"], mid):
         w.rollback_mod(p["post_id"], mid)
-        raise RuntimeError("change was saved but did not show on the live page (cache, or the text was not found). It was removed again.")
+        raise RuntimeError("change was saved but did not show on the live page (page cache, or the words sit inside a heading or an existing link). It was removed again.")
     sb.update("proposals", {"id": p["id"]}, {"status": "applied", "applied_at": now(), "backup_id": mid, "reason": p.get("reason")})
     print("applied", p["kind"], "proposal", p["id"], p["page"])
 def apply_approved(site, w):
