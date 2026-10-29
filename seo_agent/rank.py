@@ -1,23 +1,17 @@
-"""Rank a page: keyword + your page + competitor page(s) -> audit tool -> proposals for the dashboard.
+"""Rank a page: keyword + your page + competitor page(s) -> built-in audit -> proposals for the dashboard.
 Run: python -m seo_agent.rank <site_id>"""
 import os, re, sys, json, time, datetime as dt
 from urllib.parse import urlparse
-import requests
-from . import sb
+from . import sb, audit as auditmod
 from .humanize import RULES, lint, plain
 
-TOOL = os.environ.get("AUDIT_TOOL_URL", "https://seoaiagent-psi.vercel.app").rstrip("/")
-KEY = os.environ.get("AUDIT_TOOL_KEY", "")
 MODEL = os.environ.get("CONTENT_MODEL", "claude-sonnet-5-5")
 JOBS_PER_RUN = int(os.environ.get("RANK_JOBS_PER_RUN", "2"))
-AUDITS_PER_DAY = int(os.environ.get("RANK_AUDITS_PER_DAY", "3"))
-POLL_MINUTES = int(os.environ.get("RANK_POLL_MINUTES", "9"))
 NEVER_SCHEMA = {"aggregaterating", "review", "rating", "offer", "aggregateoffer"}   # claims we cannot prove
 
 
 def norm(u): return (u or "").split("#")[0].rstrip("/").lower()
 def now(): return dt.datetime.now(dt.timezone.utc).isoformat()
-def hdr(): return {"x-agent-key": KEY, "Content-Type": "application/json"}
 
 
 def ask(system, user, max_tokens=4000):
@@ -44,28 +38,15 @@ def top_pages(cfg, own, n=12):
     return out
 
 
-def start_audit(job, cfg):
-    try: cands = top_pages(cfg, job["page_url"])
+def candidates(cfg, own):
+    try: c = top_pages(cfg, own)
     except Exception as e:
-        print("WARNING: Google Search Console not readable, audit runs without internal-link candidates:", str(e)[:120]); cands = []
-    pages = [{"url": job["page_url"], "is_own_page": True}] + [{"url": u} for u in (job.get("competitor_urls") or [])]
-    body = {"target_keyword": job["keyword"], "pages": pages, "industry": cfg.get("niche") or "healthcare"}
-    if cands: body["internal_link_candidates"] = cands
-    r = requests.post(TOOL + "/api/agent/audits", headers=hdr(), json=body, timeout=60)
-    if not r.ok: raise RuntimeError(f"audit tool refused: {r.status_code} {r.text[:200]}")
-    return r.json()["audit_run_id"]
+        print("Search Console not readable, using the site's own page list instead:", str(e)[:100]); c = []
+    return c or auditmod.wp_pages(cfg["wp_base"], own)
 
 
-def poll(run_id):
-    end = time.time() + POLL_MINUTES * 60
-    while time.time() < end:
-        r = requests.get(TOOL + "/api/agent/audits", headers=hdr(), params={"id": run_id}, timeout=60)
-        if not r.ok: raise RuntimeError(f"audit status failed: {r.status_code} {r.text[:200]}")
-        j = r.json(); st = j.get("status")
-        if st == "failed": raise RuntimeError("audit failed: " + str(j.get("error"))[:300])
-        if st in ("success", "complete") or j.get("audit"): return j
-        time.sleep(20)
-    return None
+def do_audit(job, cfg):
+    return auditmod.audit(job["keyword"], job["page_url"], job.get("competitor_urls") or [], candidates(cfg, job["page_url"]), cfg.get("niche") or "healthcare", ask)
 
 
 # ---------- proposal builders ----------
@@ -154,6 +135,7 @@ def build(job, rep, own, live, site_cfg, site_row, pid):
 
 def summary(rep):
     return {"scores": rep.get("scores"), "hypothesis": [h.get("statement") for h in (rep.get("ranking_hypothesis") or [])][:5],
+            "recommendations": [r.get("action") for r in (rep.get("recommendations") or [])][:8],
             "confidence": rep.get("confidence"), "missing_data": rep.get("missing_data")}
 
 
@@ -161,23 +143,17 @@ def run(site_id):
     from . import run as runmod, wp
     cfg = runmod.sites()[site_id]; site = runmod.ensure_site(cfg)
     if site["mode"] == "paused": return print("site paused")
-    if not KEY: return print("AUDIT_TOOL_KEY is not set")
-    w = wp.WP(cfg); since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
-    started = len(sb.select("rank_jobs", site_id=f"eq.{site_id}", started_at=f"gte.{since}", select="id"))
-    jobs = sb.select("rank_jobs", site_id=f"eq.{site_id}", status="in.(auditing,queued)", order="created_at.asc", limit=str(JOBS_PER_RUN))
+    w = wp.WP(cfg)
+    jobs = sb.select("rank_jobs", site_id=f"eq.{site_id}", status="in.(queued,auditing)", order="created_at.asc", limit=str(JOBS_PER_RUN))
     if not jobs: return print("no rank jobs waiting")
     for job in jobs:
         try:
-            if job["status"] == "queued":
-                if started >= AUDITS_PER_DAY: print("daily audit limit reached"); continue
-                rid = start_audit(job, {**cfg, **site}); started += 1
-                sb.update("rank_jobs", {"id": job["id"]}, {"status": "auditing", "audit_run_id": rid, "started_at": now(), "updated_at": now()}); job["audit_run_id"] = rid
-            rep = poll(job["audit_run_id"])
-            if rep is None: print("audit still running, will continue next run:", job["keyword"]); continue
+            sb.update("rank_jobs", {"id": job["id"]}, {"status": "auditing", "started_at": now(), "updated_at": now()})
+            rep = do_audit(job, {**cfg, **site})
             live = w.live(job["page_url"]); pid = int(live["post_id"]) if live.get("post_id") else None
             props = build(job, rep, job["page_url"], live, cfg, {**cfg, **site}, pid)
             if props: sb.insert("proposals", props)
-            sb.update("rank_jobs", {"id": job["id"]}, {"status": "ready", "report": summary(rep), "proposals_made": len(props), "updated_at": now()})
+            sb.update("rank_jobs", {"id": job["id"]}, {"status": "ready", "report": summary(rep), "proposals_made": len(props), "error": None, "updated_at": now()})
             print("rank job done:", job["keyword"], "| proposals:", len(props))
         except Exception as e:
             sb.update("rank_jobs", {"id": job["id"]}, {"status": "failed", "error": str(e)[:400], "updated_at": now()}); print("FAILED", job["keyword"], e)
