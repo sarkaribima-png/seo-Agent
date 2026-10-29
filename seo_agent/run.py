@@ -1,6 +1,27 @@
 import sys, json, time, yaml, datetime as dt
 from . import db, drops, guard, sb
-def sites(): return {s["id"]: s for s in yaml.safe_load(open("sites.yaml"))["sites"]}
+def sites():
+    """Sites from sites.yaml, plus every site added in the dashboard (database wins where it has a value)."""
+    out = {s["id"]: dict(s) for s in yaml.safe_load(open("sites.yaml"))["sites"]}
+    try:
+        for r in sb.select("sites", select="*"):
+            if r.get("active") is False: out.pop(r["id"], None); continue
+            base = out.get(r["id"]) or {"daily_page_limit": 1, "banned_terms": [], "competitor_names": [], "secrets_prefix": r["id"].upper()}
+            out[r["id"]] = {**base, **{k: v for k, v in r.items() if v not in (None, [], "")}}
+    except Exception as e: print("note: could not read sites from the database:", str(e)[:80])
+    return out
+def site_ids(arg, kinds=None):
+    s = sites()
+    if arg != "all" and arg not in s: raise SystemExit(f"unknown or inactive site: {arg}")
+    return [i for i in s if (arg == i or (arg == "all" and s[i].get("mode") != "paused")) and (not kinds or s[i].get("type", "wordpress") in kinds)]
+def each(arg, fn, kinds=None):
+    """Run fn(site_id) for one site, or for every active site. One site failing does not stop the others."""
+    bad = 0
+    for sid in site_ids(arg, kinds):
+        print(f"--- {sid} ---")
+        try: fn(sid)
+        except Exception as e: bad += 1; print(f"SITE {sid} FAILED: {e}")
+    if bad: sys.exit(1)
 def now(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def ensure_site(site):
     r = sb.select("sites", id=f"eq.{site['id']}")
@@ -16,7 +37,7 @@ def applied_last_day(site_id):
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
     return len(sb.select("proposals", site_id=f"eq.{site_id}", status="eq.applied", applied_at=f"gte.{since}"))
 MODKINDS = {"schema": lambda n: {"json_ld": n["json_ld"]}, "internal_link": lambda n: {"anchor": n["anchor"], "url": n["url"]},
-            "content_add": lambda n: {"html": n["html"]}}
+            "content_add": lambda n: {"html": n["html"], "position": n.get("position") or "before_faq"}}
 PLUGIN_KIND = {"schema": "schema", "internal_link": "link", "content_add": "section"}
 def apply_mod(site, row, w, p):
     """Schema / link / section: add through the plugin, then check it really shows on the live page. If not, undo it."""
@@ -34,6 +55,7 @@ def apply_mod(site, row, w, p):
     sb.update("proposals", {"id": p["id"]}, {"status": "applied", "applied_at": now(), "backup_id": mid, "reason": p.get("reason")})
     print("applied", p["kind"], "proposal", p["id"], p["page"])
 def apply_approved(site, w):
+    if getattr(w, "static", False): return print("static site: approved changes wait for the FTP step (not set up yet)")
     row = sb.select("sites", id=f"eq.{site['id']}")[0]
     for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.approved", kind="in.(title_meta,schema,internal_link,content_add)"):
         try:
@@ -57,7 +79,7 @@ def daily(site_id):
     from . import gsc, wp, propose
     site = sites()[site_id]; row = ensure_site(site); mode = row["mode"]
     if mode == "paused": return print("site paused from dashboard")
-    c = db.conn(); w = wp.WP(site)
+    c = db.conn(); w = wp.client(site)
     rows = gsc.pull(c, site); sb.upsert("gsc_daily", rows, "site_id,date,page,device"); print("gsc rows:", len(rows))
     apply_rollbacks(site, w); apply_approved(site, w)
     if applied_last_day(site_id) >= row["daily_page_limit"]: return print("daily limit reached")
@@ -82,7 +104,7 @@ def daily(site_id):
     print(prop["status"], t["page"], "-> proposal", ins.get("id"))
 def audit_all(site_id):
     from . import wp
-    site = sites()[site_id]; ensure_site(site); w = wp.WP(site); n = 0
+    site = sites()[site_id]; ensure_site(site); w = wp.client(site); n = 0
     for pid in w.all_ids():
         try: a = w.audit(pid)
         except Exception as e: print("skip", pid, e); continue
@@ -92,11 +114,11 @@ def audit_all(site_id):
                   "words": a["words"], "images": a["images"], "images_no_alt": a["images_no_alt"],
                   "risky_claims": a["risky_claims"], "schema_issues": issues, "raw": a}]); n += 1
     print("audited pages:", n)
-def rollback(site_id, proposal_id):
+def rollback(_ignored, proposal_id):
     from . import wp
-    p = sb.select("proposals", id=f"eq.{proposal_id}")[0]; w = wp.WP(sites()[site_id])
+    p = sb.select("proposals", id=f"eq.{proposal_id}")[0]; site_id = p["site_id"]; w = wp.client(sites()[site_id])
     (w.rollback if p["kind"] == "title_meta" else w.rollback_mod)(p["post_id"], p["backup_id"]); sb.update("proposals", {"id": proposal_id}, {"status": "rolled_back"}); print("rolled back", proposal_id)
 if __name__ == "__main__":
     cmd = sys.argv[1]
-    {"daily": lambda: daily(sys.argv[2]), "audit-all": lambda: audit_all(sys.argv[2]),
-     "rollback": lambda: rollback(sys.argv[2], int(sys.argv[3]))}[cmd]()
+    if cmd == "rollback": rollback(None, int(sys.argv[3]))
+    else: each(sys.argv[2], {"daily": daily, "audit-all": audit_all}[cmd])
