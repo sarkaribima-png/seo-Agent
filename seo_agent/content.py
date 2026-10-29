@@ -9,9 +9,16 @@ TARGET_GRADE = float(os.environ.get("READABILITY_TARGET", "5.5"))
 MAX_DRAFTS = int(os.environ.get("MAX_DRAFTS_PER_RUN", "2"))
 MODEL = os.environ.get("CONTENT_MODEL", "claude-sonnet-5-5")
 IMG_MODEL = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1")
-IMG_STYLE = {"medical": "Flat minimal vector illustration, soft calm colours, simple shapes, no text, no logos, no realistic human bodies or faces, "
-                        "no before-and-after, no surgery scenes, no blood. Concept: ",
-             "default": "Clean modern flat illustration, simple shapes, no text, no logos, no real people. Concept: "}
+IMG_STYLE = {"medical": "Photorealistic editorial photograph, natural window light, soft neutral and warm palette, shallow depth of field, "
+                        "50mm lens, high detail, natural skin texture, calm mood. Adults only, always fully clothed in plain everyday clothes "
+                        "(sports top, tank top, loose shirt). No text, no letters, no logos, no watermarks, no nudity, no bare breasts or genitals, "
+                        "no scars, marks, bruises or surgical lines, no before-and-after, no surgery, no medical procedures, no syringes. Scene: ",
+             "default": "Photorealistic editorial photograph, natural light, soft palette, shallow depth of field, high detail. "
+                        "No text, no letters, no logos, no watermarks. Scene: "}
+BANNER_NOTE = " Composition: main subject on the right side of the frame; keep the left 45 percent calm, soft and uncluttered for a headline."
+CAPTION = os.environ.get("IMAGE_CAPTION", "Illustrative image")
+CAPTION_HTML = f"<figcaption>{CAPTION}</figcaption>" if CAPTION else ""
+FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Bold.ttf"
 
 SYS = """You write blog posts for a website. The reader is a normal adult who is not an expert. Write like a careful, kind human.
 READABILITY: aim for US school grade 5 or lower. Short sentences (average under 12 words). Common words. When a medical or technical
@@ -32,7 +39,8 @@ OUTPUT, exactly these tags and nothing else:
 <meta_title>30-60 characters, contains the primary keyword</meta_title>
 <meta_description>110-155 characters, plain, gives a reason to click, no claims</meta_description>
 <slug>short-lowercase-slug</slug>
-<image_prompts>["concept 1","concept 2","concept 3"]</image_prompts>
+<image_prompts>["scene 1: wide calm lifestyle photo related to the topic","scene 2","scene 3"]</image_prompts>
+IMAGE SCENES (photo ideas, decided by the topic): scene 1 is the banner. If the topic is about a body area or a cosmetic procedure, scene 1 is a clothed close-up of that area (for example torso in a plain sports top, waist and hips in plain leggings, side profile of the face), calm, no examination, no scars. Otherwise scene 1 is a calm lifestyle photo. Scenes 2 and 3 are ordinary life (a person resting at home, a bright kitchen, a doctor and patient talking at a desk). Never before-and-after, never an operation.
 <article>...</article>"""
 
 
@@ -156,11 +164,12 @@ def make_images(prompts, profile):
     if not model: return [], why
     print("image model:", model)
     style = IMG_STYLE["medical"] if profile == "medical" else IMG_STYLE["default"]; out, note = [], ""
-    for p in prompts[:3]:
-        prompt = style + str(p)[:600]; last = ""
+    for idx, p in enumerate(prompts[:3]):
+        prompt = style + str(p)[:600] + (BANNER_NOTE if idx == 0 else ""); last = ""
+        quality = os.environ.get("OPENAI_IMAGE_QUALITY_BANNER", "high") if idx == 0 else os.environ.get("OPENAI_IMAGE_QUALITY", "medium")
         for body in ({"model": model, "prompt": prompt, "size": "1536x1024", "n": 1}, {"model": model, "prompt": prompt}):
             try:
-                if body.get("size") and model.startswith("gpt-image"): body["quality"] = os.environ.get("OPENAI_IMAGE_QUALITY", "medium")
+                if body.get("size") and model.startswith("gpt-image"): body["quality"] = quality
                 r = requests.post("https://api.openai.com/v1/images/generations", headers={"Authorization": f"Bearer {key}"}, json=body, timeout=240)
                 if not r.ok: last = f"{model}: {r.status_code} {r.text[:300]}"; continue
                 d = r.json()["data"][0]
@@ -168,6 +177,15 @@ def make_images(prompts, profile):
                 out.append((raw, str(p))); last = ""; break
             except Exception as e:
                 last = f"{model}: {str(e)[:300]}"
+        if last and ("moderation" in last.lower() or "safety" in last.lower()):
+            try:
+                body = {"model": model, "prompt": style + "A calm adult in everyday clothes resting in a bright room at home, face turned slightly away." + (BANNER_NOTE if idx == 0 else "")}
+                r = requests.post("https://api.openai.com/v1/images/generations", headers={"Authorization": f"Bearer {key}"}, json=body, timeout=240)
+                if r.ok:
+                    d = r.json()["data"][0]; raw = base64.b64decode(d["b64_json"]) if d.get("b64_json") else requests.get(d["url"], timeout=60).content
+                    out.append((raw, "calm lifestyle photo")); last = ""
+            except Exception as e:
+                last = f"{model}: {str(e)[:200]}"
         if last: note = "image failed: " + last
     return out, note
 
@@ -179,6 +197,70 @@ def to_webp(raw):
         return b.getvalue(), "image/webp", "webp", im.size
     except Exception:
         return raw, "image/png", "png", (1536, 1024)
+
+
+def get_font(size):
+    from PIL import ImageFont
+    path = "/tmp/Poppins-Bold.ttf"
+    try:
+        if not os.path.exists(path):
+            r = requests.get(FONT_URL, timeout=30); r.raise_for_status(); open(path, "wb").write(r.content)
+        return ImageFont.truetype(path, size)
+    except Exception:
+        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"):
+            if os.path.exists(p): return ImageFont.truetype(p, size)
+        return ImageFont.load_default()
+
+
+def fetch_logo(site_id):
+    try:
+        rows = sb.select("brain_items", site_id=f"eq.{site_id}", kind="eq.logo", status="eq.active", select="file_path", order="created_at.desc", limit="1")
+        if not rows or not rows[0].get("file_path"): return None
+        k = os.environ["SUPABASE_SERVICE_KEY"]
+        r = requests.get(os.environ["SUPABASE_URL"].rstrip("/") + "/storage/v1/object/brain/" + rows[0]["file_path"],
+                         headers={"apikey": k, "Authorization": f"Bearer {k}"}, timeout=30)
+        return r.content if r.ok else None
+    except Exception:
+        return None
+
+
+def compose_banner(raw, title, color, logo):
+    """Our own banner: generated photo + soft light panel + headline (words before ':' in the brand colour) + logo."""
+    from PIL import Image, ImageDraw
+    im = Image.open(io.BytesIO(raw)).convert("RGB"); W, H = im.size
+    fade = Image.new("L", (W, H), 0); px = fade.load(); edge = int(W * 0.62)
+    for x in range(edge):
+        a = int(235 * (1 - x / edge) ** 0.9)
+        for y in range(H): px[x, y] = a
+    im.paste(Image.new("RGB", (W, H), (255, 255, 255)), (0, 0), fade)
+    d = ImageDraw.Draw(im); head, _, rest = title.partition(":"); hw = head.split(); words = ([(w, True) for w in hw[:-1]] + [(hw[-1] + ":", True)] if hw and rest else [(w, True) for w in hw]) + [(w, False) for w in rest.split()]
+    if not rest: words = [(w, i < 3) for i, w in enumerate(head.split())]
+    size = int(H * 0.072); maxw = int(W * 0.5); x0, y0 = int(W * 0.06), int(H * 0.16)
+    while True:
+        font = get_font(size); lines, cur, curw = [], [], 0
+        for w, acc in words:
+            ww = d.textlength(w + " ", font=font)
+            if cur and curw + ww > maxw: lines.append(cur); cur, curw = [], 0
+            cur.append((w, acc)); curw += ww
+        lines.append(cur)
+        if len(lines) * size * 1.25 < H * 0.62 or size < 26: break
+        size -= 4
+    y = y0
+    for ln in lines:
+        x = x0
+        for w, acc in ln:
+            d.text((x, y), w, font=font, fill=color if acc else "#0f1b33"); x += d.textlength(w + " ", font=font)
+        y += int(size * 1.25)
+    d.rectangle([x0, y + int(size * 0.2), x0 + int(W * 0.09), y + int(size * 0.2) + 6], fill=color)
+    if CAPTION:
+        f2 = get_font(max(14, int(H * 0.026))); tw = d.textlength(CAPTION, font=f2); px_, py_ = W - tw - int(W * 0.02), H - int(H * 0.055)
+        d.text((px_ + 1, py_ + 1), CAPTION, font=f2, fill=(0, 0, 0)); d.text((px_, py_), CAPTION, font=f2, fill=(255, 255, 255))
+    if logo:
+        try:
+            lg = Image.open(io.BytesIO(logo)).convert("RGBA"); h = int(H * 0.09); lg = lg.resize((int(lg.width * h / lg.height), h))
+            im.paste(lg, (x0, H - h - int(H * 0.06)), lg)
+        except Exception: pass
+    b = io.BytesIO(); im.save(b, "PNG"); return b.getvalue()
 
 
 def upload_media(w, raw, name, alt):
@@ -194,7 +276,7 @@ def place_images(art, imgs):
     """Put image 1 after the intro, the others after the first paragraph of the 3rd and 5th section."""
     if not imgs: return art
     fig = lambda i: (f'<figure class="wp-block-image size-large"><img src="{i["url"]}" alt="{htmlmod.escape(i["alt"], True)}" '
-                     f'width="{i.get("w", 1536)}" height="{i.get("h", 1024)}" loading="lazy" /></figure>')
+                     f'width="{i.get("w", 1536)}" height="{i.get("h", 1024)}" loading="lazy" />{CAPTION_HTML}</figure>')
     parts = re.split(r"(?i)(?=<h2[ >])", art); spots = {(0 if parts[0].strip() else 1): 0, 3: 1, 5: 2}; out = []
     for n, part in enumerate(parts):
         k = spots.get(n)
@@ -212,10 +294,15 @@ def write_one(site, idea, w):
     except ValueError: prompts = []
     if not prompts: prompts = [idea["primary_keyword"] + " concept", idea["title"] + " concept"]
     raw, note = make_images(prompts, site.get("profile")); slug = slugify(tag(t, "slug") or idea["primary_keyword"]); imgs = []
+    title = idea["title"]; logo = fetch_logo(site["id"]); color = site.get("brand_color") or "#2563eb"
     for n, (b, p) in enumerate(raw):
-        try: imgs.append(upload_media(w, b, f"{slug}-{n + 1}", f"{idea['primary_keyword']}: {p}"[:120]))
+        try:
+            if n == 0:
+                try: b = compose_banner(b, title, color, logo)
+                except Exception as e: note = f"banner text failed: {str(e)[:120]}"
+            imgs.append(upload_media(w, b, f"{slug}-{n + 1}", (title if n == 0 else f"{idea['primary_keyword']}: {p}")[:120]))
         except Exception as e: note = f"upload failed: {str(e)[:150]}"
-    body = place_images(best["art"], imgs); title = idea["title"]
+    body = place_images(best["art"], imgs[1:])
     mt, md = tag(t, "meta_title")[:70] or title, tag(t, "meta_description")[:170]
     r = requests.post(w.base + "/wp-json/wp/v2/posts", auth=w.auth, timeout=90,
                       json={"title": title, "content": body, "status": "draft", "slug": slug, "excerpt": md,
