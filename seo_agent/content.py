@@ -398,4 +398,5 @@ def publish(site_id):
 
 
 if __name__ == "__main__":
-    {"write": write, "publish": publish}[sys.argv[1]](sys.argv[2])
+    from . import run as _r
+    _r.each(sys.argv[2], {"write": write, "publish": publish}[sys.argv[1]], kinds=("wordpress",))
