@@ -1,0 +1,48 @@
+name: onpage
+# Old-pages SEO in bulk. Writes PENDING proposals only (title/meta, image alt text) and H1 findings. Nothing is applied by this job.
+# Also makes content briefs for new pages. Run it by hand: Actions -> onpage -> Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "site id, or all"
+        default: "kalosa"
+      limit:
+        description: "most proposals (onpage) or briefs to create in this run"
+        default: "20"
+      task:
+        description: "onpage | briefs"
+        default: "onpage"
+      keyword:
+        description: "briefs only: one keyword to write a brief for (leave empty to use ideas without a brief)"
+        default: ""
+permissions: {contents: read}
+jobs:
+  onpage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - name: Run
+        # inputs go through env, never straight into the shell line
+        run: |
+          case "$TASK" in
+            onpage) python -m seo_agent.onpage "$SITE" "$LIMIT" ;;
+            briefs) if [ -n "$KEYWORD" ]; then python -m seo_agent.briefs "$SITE" --keyword "$KEYWORD"; else python -m seo_agent.briefs "$SITE" "$LIMIT"; fi ;;
+            *) echo "task must be onpage or briefs"; exit 2 ;;
+          esac
+        env:
+          SITE: ${{ github.event.inputs.site || 'kalosa' }}
+          LIMIT: ${{ github.event.inputs.limit || '20' }}
+          TASK: ${{ github.event.inputs.task || 'onpage' }}
+          KEYWORD: ${{ github.event.inputs.keyword }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KALOSA_WP_USER: ${{ secrets.KALOSA_WP_USER }}
+          KALOSA_WP_APP_PASSWORD: ${{ secrets.KALOSA_WP_APP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

@@ -1,0 +1,28 @@
+name: report
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "site id, or all"
+        default: "all"
+      period:
+        description: "week or month"
+        default: "week"
+  schedule:
+    - cron: "30 2 * * 1"   # Monday 08:00 IST (weekly); after the 09:30 IST daily track the data is 2 days behind anyway
+permissions: {contents: read}
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -m seo_agent.report "${{ github.event.inputs.site || 'all' }}" --period "${{ github.event.inputs.period || 'week' }}"
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # optional: ANTHROPIC_API_KEY + REPORT_LLM=1 lets Claude rephrase the one-line summary (numbers are guarded)
