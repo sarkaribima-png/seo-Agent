@@ -5,6 +5,7 @@ import os, re, io, json, time, html, zlib, posixpath, datetime as dt
 from urllib.parse import urlparse, urljoin
 import requests
 from .wp import WP, secret
+from . import placement
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 RISKY = re.compile(r"(?i)\b(guarantee[ds]?|100\s?%|no risk|risk[- ]free|cure[ds]?|miracle|best (?:doctor|surgeon|clinic)|number one|#1)\b")
@@ -125,15 +126,28 @@ def add_link(h, mid, anchor, url, own_host):
 
 HEAD = re.compile(r"<h([1-6])\b[^>]*>(.*?)</h\1>", re.S | re.I)
 def _insert_at(h, pos, block): return h[:pos] + block + h[pos:]
-def _wrapper_start(h, pos):
-    m = re.search(r"<(section|div)\b[^>]*>\s*$", h[:pos], re.I); return m.start() if m else pos
+def _wrapper_start(h, pos, levels=1):
+    """Step out of up to `levels` wrapper tags (div or section) that open right before a heading, so the new block sits beside the old one, not inside it."""
+    for _ in range(levels):
+        m = re.search(r"<(section|div)\b[^>]*>\s*$", h[:pos], re.I)
+        if not m: break
+        pos = m.start()
+    return pos
 def _end_pos(h):
     for pat in (r"</main>", r"</article>", r"<footer\b", r"</body>"):
         ms = list(re.finditer(pat, h, re.I))
         if ms: return ms[-1].start()
     return len(h)
 def add_section(h, mid, section_html, position="before_faq"):
+    """position: 'before_faq' | 'after_faq' | 'end' | {"after_heading": "<heading text>", "occurrence": 1}"""
+    position = placement.normalize(position)
     block = _mark(mid, f'<div data-sab="{mid}">{section_html}</div>'); heads = [(m.start(), m.end(), int(m.group(1)), re.sub(r"<[^>]+>", "", m.group(2))) for m in HEAD.finditer(h)]
+    if isinstance(position, dict):
+        tgt = placement.pick_heading(heads, position["after_heading"], position.get("occurrence", 1))
+        if not tgt: raise RuntimeError(f"The heading '{position['after_heading']}' was not found on this page (or more than one heading matches). Nothing was changed. Pick the heading again.")
+        nxt = next((x for x in heads if x[0] >= tgt[1] and x[2] <= tgt[2]), None)
+        pos = min(_wrapper_start(h, nxt[0], 3), _end_pos(h)) if nxt else _end_pos(h)
+        return _insert_at(h, pos, "\n" + block + "\n")
     faq = next((x for x in heads if re.search(r"(?i)\bfaq|frequently asked", x[3])), None)
     if position != "end" and faq:
         if position == "after_faq":
@@ -149,6 +163,56 @@ def remove_mod(h, mid):
         return a.group(1) if a else ""
     new, n = rx.subn(f, h); return new, n > 0
 
+# ---------- image alt text (kind 'alt'): fill EMPTY alt attributes only, never overwrite an alt that is already written ----------
+IMG = re.compile(r"<img\b[^>]*>", re.I)
+SRC_ATTRS = ("src", "data-src", "data-lazy-src", "data-original")
+def _attr(tag, name):
+    m = re.search(r'\s%s\s*=\s*(?:"([^"]*)"|\'([^\']*)\')' % re.escape(name), tag, re.I)
+    return None if not m else (m.group(1) if m.group(1) is not None else m.group(2))
+def img_key(src):
+    """Stable key for an image file: file name without folders, query, size suffix (-300x200) and extension. 'a/b/Hero-Img-300x200.jpg?x=1' -> 'hero-img'."""
+    f = posixpath.basename(urlparse(html.unescape(src or "")).path).lower()
+    f = re.sub(r"\.[a-z0-9]{2,5}$", "", f)
+    return re.sub(r"-\d{2,4}x\d{2,4}$", "", f)
+def img_keys(tag):
+    ks = {img_key(_attr(tag, a)) for a in SRC_ATTRS if _attr(tag, a)}
+    ss = _attr(tag, "srcset") or _attr(tag, "data-srcset") or ""
+    ks |= {img_key(x.split()[0]) for x in ss.split(",") if x.strip()}
+    return {k for k in ks if k}
+def add_alt(h, mid, items):
+    """items: [{"src": "...", "alt": "..."}]. Returns (new_html, pairs). Only <img> tags whose alt is missing or empty are changed.
+    Each changed tag is wrapped in <!--sab:ID-->..<!--/sab:ID--> and gets data-sab="ID". pairs lets rollback put the old tag back."""
+    want = {}
+    for it in items:
+        a = re.sub(r"\s+", " ", str(it.get("alt") or "")).strip()
+        k = img_key(it.get("src"))
+        if k and a: want.setdefault(k, a)
+    if not want: raise RuntimeError("no usable image and alt text in this change")
+    pairs = []
+    # never touch images that sit inside <script>, <style> or comments
+    parts = re.split(r"(<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->)", h, flags=re.S | re.I)
+    for i in range(0, len(parts), 2):
+        def fix(m):
+            tag = m.group(0); cur = _attr(tag, "alt")
+            if cur is not None and cur.strip(): return tag
+            hit = [k for k in img_keys(tag) if k in want]
+            if not hit: return tag
+            alt = _esc(want[hit[0]])
+            base = re.sub(r'\s+alt\s*=\s*(?:"[^"]*"|\'[^\']*\')', "", tag, count=1, flags=re.I)
+            base = re.sub(r'\s+alt(?=[\s/>])(?!\s*=)', "", base, count=1, flags=re.I)
+            end = "/>" if base.rstrip().endswith("/>") else ">"
+            base = base.rstrip()[: -len(end)].rstrip()
+            new = f'{base} alt="{alt}" data-sab="{mid}"{" /" if end == "/>" else ""}>'
+            wrapped = _mark(mid, new); pairs.append({"old": tag, "new": wrapped}); return wrapped
+        parts[i] = IMG.sub(fix, parts[i])
+    if not pairs: raise RuntimeError("none of the images was found without alt text on this page (already fixed, or the file name does not match)")
+    return "".join(parts), pairs
+def revert_alt(h, pairs):
+    n = 0
+    for p in pairs:
+        if p["new"] in h: h = h.replace(p["new"], p["old"]); n += 1
+    return h, n > 0
+
 
 # ---------- the client ----------
 class Static(WP):
@@ -158,7 +222,8 @@ class Static(WP):
         p = site.get("secrets_prefix") or site["id"].upper()
         h, u, pw = secret(f"{p}_FTP_HOST"), secret(f"{p}_FTP_USER"), secret(f"{p}_FTP_PASSWORD")
         if not (h and u and pw): raise RuntimeError(f"Add the GitHub secrets {p}_FTP_HOST, {p}_FTP_USER and {p}_FTP_PASSWORD for this site")
-        self.root = "/" + (site.get("ftp_root") or "public_html").strip("/"); self.r = Remote(site.get("ftp_protocol") or "ftp", h, u, pw, site.get("ftp_port")); self._on = False
+        rt = site.get("ftp_root")   # "" or "/" means the FTP user is already inside the web root
+        self.root = "/" + ("public_html" if rt is None else rt).strip("/").strip("."); self.r = Remote(site.get("ftp_protocol") or "ftp", h, u, pw, site.get("ftp_port")); self._on = False
         self.urls = {}; self.blog = (site.get("blog_path") or "blog").strip("/")
     def _rem(self):
         if not self._on: self.r.connect(); self._on = True
@@ -249,6 +314,13 @@ class Static(WP):
         url, f, h, enc = self._load(pid); orig = h.encode(enc, "replace"); mid = int(time.time() * 1000)
         if kind == "schema": new = add_schema(h, mid, data["json_ld"])
         elif kind == "link": new = add_link(h, mid, data["anchor"], data["url"], self.host)
+        elif kind == "alt":
+            from .onpage import check_alt
+            bad = [f"{i.get('src')}: {'; '.join(e)}" for i in data["items"] if (e := check_alt(i.get("alt"), self.site))]
+            if bad: raise RuntimeError("alt text rejected: " + " | ".join(bad)[:300])
+            new, pairs = add_alt(h, mid, data["items"])
+            self._save(f, new, enc, orig, mid); self._rem().write(posixpath.join(self.root, ".sab", f"{mid}.alt.json"), json.dumps(pairs).encode())
+            return {"mod_id": mid, "changed": len(pairs)}
         elif kind == "section":
             from .content import lint
             probs = lint(data["html"], self.site.get("banned_terms") or [], self.site.get("profile") == "medical")
@@ -258,7 +330,8 @@ class Static(WP):
         else: raise RuntimeError("unknown change kind " + kind)
         self._save(f, new, enc, orig, mid); return {"mod_id": mid}
     def rollback_mod(self, pid, mod_id):
-        url, f, h, enc = self._load(pid); new, changed = remove_mod(h, int(mod_id))
+        url, f, h, enc = self._load(pid); aj = self._rem().read(posixpath.join(self.root, ".sab", f"{int(mod_id)}.alt.json"))
+        new, changed = revert_alt(h, json.loads(aj)) if aj is not None else remove_mod(h, int(mod_id))
         if not changed: raise RuntimeError("the change was not found in the file (already removed?)")
         self._save(f, new, enc, h.encode(enc, "replace"), int(time.time() * 1000)); return {"ok": True}
     # -- blog posts

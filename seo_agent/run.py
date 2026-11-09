@@ -36,18 +36,29 @@ def pick(c, site):
 def applied_last_day(site_id):
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
     return len(sb.select("proposals", site_id=f"eq.{site_id}", status="eq.applied", applied_at=f"gte.{since}"))
+from . import placement
 MODKINDS = {"schema": lambda n: {"json_ld": n["json_ld"]}, "internal_link": lambda n: {"anchor": n["anchor"], "url": n["url"]},
-            "content_add": lambda n: {"html": n["html"], "position": n.get("position") or "before_faq"}}
-PLUGIN_KIND = {"schema": "schema", "internal_link": "link", "content_add": "section"}
+            "content_add": lambda n: {"html": n["html"], "position": placement.normalize(n.get("position"))},
+            "alt_text": lambda n: {"items": [{"src": i["src"], "alt": i["alt"]} for i in n["images"]]}}
+PLUGIN_KIND = {"schema": "schema", "internal_link": "link", "content_add": "section", "alt_text": "alt"}
+def needs_reviewer(row, p):
+    """On a site with reviewer_required, new text and image descriptions wait for 'Mark as reviewed'. Title/meta waits only when the on-page batch wrote it."""
+    if not row.get("reviewer_required") or p.get("reviewed_by"): return False
+    return p["kind"] in ("content_add", "alt_text") or (p["kind"] == "title_meta" and str(p.get("source") or "").startswith("onpage"))
 def apply_mod(site, row, w, p):
-    """Schema / link / section: add through the plugin, then check it really shows on the live page. If not, undo it."""
-    if p["kind"] == "content_add" and row.get("reviewer_required") and not p.get("reviewed_by"):
+    """Schema / link / section / alt text: add through the plugin, then check it really shows on the live page. If not, undo it."""
+    if needs_reviewer(row, p):
         return print("waiting for reviewer on proposal", p["id"], "(Mark as reviewed in the dashboard)")
     if not p.get("post_id"): raise RuntimeError("no post id for this page")
     if p["kind"] == "internal_link":
         a = p["new"]["anchor"].strip().lower()
         if a not in w.page_text(p["page"]).lower():
             raise RuntimeError(f"The words '{p['new']['anchor']}' are not in the text of this page, so there is nothing to link. Nothing was changed. Run a new audit to get a link that fits.")
+    if p["kind"] == "content_add":
+        try: pos = placement.normalize(p["new"].get("position"))
+        except ValueError as e: raise RuntimeError(f"bad placement: {e}")
+        if isinstance(pos, dict) and placement.norm_heading(pos["after_heading"]) not in placement.norm_heading(w.page_text(p["page"])):
+            raise RuntimeError(f"The heading '{pos['after_heading']}' is not on this page. Nothing was changed. Choose the heading again in the dashboard.")
     r = w.add_mod(p["post_id"], PLUGIN_KIND[p["kind"]], MODKINDS[p["kind"]](p["new"])); mid = r["mod_id"]
     if not w.mod_visible(p["page"], mid):
         w.rollback_mod(p["post_id"], mid)
@@ -56,9 +67,10 @@ def apply_mod(site, row, w, p):
     print("applied", p["kind"], "proposal", p["id"], p["page"])
 def apply_approved(site, w):
     row = sb.select("sites", id=f"eq.{site['id']}")[0]
-    for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.approved", kind="in.(title_meta,schema,internal_link,content_add)"):
+    for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.approved", kind="in.(title_meta,schema,internal_link,content_add,alt_text)"):
         try:
             if p["kind"] == "title_meta":
+                if needs_reviewer(row, p): print("waiting for reviewer on proposal", p["id"], "(Mark as reviewed in the dashboard)"); continue
                 r = w.set_seo(p["post_id"], p["new"]["title"], p["new"]["meta"])
                 sb.update("proposals", {"id": p["id"]}, {"status": "applied", "applied_at": now(), "backup_id": r.get("backup_id")})
                 print("applied approved proposal", p["id"], p["page"])

@@ -22,3 +22,10 @@ def top_queries(site, page, days=28, n=8):
     rows = s.searchanalytics().query(siteUrl=site["gsc_property"], body=body).execute().get("rows", [])
     rows.sort(key=lambda r: -r["impressions"])
     return [{"q": r["keys"][0], "impr": r["impressions"], "pos": round(r["position"], 1)} for r in rows[:n]]
+def site_queries(site, days=28, n=60):
+    """Top search queries for the whole property (used to seed content ideas when there is no competitor data)."""
+    s = service(); end = dt.date.today() - dt.timedelta(days=2); start = end - dt.timedelta(days=days)
+    body = {"startDate": str(start), "endDate": str(end), "dimensions": ["query"], "rowLimit": 200}
+    rows = s.searchanalytics().query(siteUrl=site["gsc_property"], body=body).execute().get("rows", [])
+    rows.sort(key=lambda r: -r["impressions"])
+    return [r["keys"][0] for r in rows[:n]]

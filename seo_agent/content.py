@@ -346,7 +346,7 @@ def write_one(site, idea, w):
 
 def write(site_id):
     from . import run, wp
-    cfg = run.sites()[site_id]; site = run.ensure_site(cfg); w = wp.WP(cfg)
+    cfg = run.sites()[site_id]; site = run.ensure_site(cfg); w = wp.client(cfg)
     if site["mode"] == "paused": return print("site paused")
     ideas = sb.select("content_ideas", site_id=f"eq.{site_id}", status="eq.approved", attempts="lt.2", order="decided_at.asc", limit=str(MAX_DRAFTS))
     if not ideas: return print("no approved ideas waiting")
@@ -377,7 +377,7 @@ def live_check(p, url, static=False):
 
 def publish(site_id):
     from . import run, wp
-    cfg = run.sites()[site_id]; site = run.ensure_site(cfg); w = wp.WP(cfg)
+    cfg = run.sites()[site_id]; site = run.ensure_site(cfg); w = wp.client(cfg)
     if site["mode"] == "paused": return print("site paused")
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
     done = len(sb.select("content_posts", site_id=f"eq.{site_id}", status="eq.published", published_at=f"gte.{since}", select="id"))
