@@ -375,6 +375,23 @@ def live_check(p, url, static=False):
         print("live check failed:", str(e)[:150])
 
 
+def publish_one(site, w, p):
+    """Publish ONE approved post. Returns the live URL, or None if skipped (featured image missing). Raises on failure. Used by publish() and by publisher.py."""
+    if getattr(w, "static", False):
+        url, notes = w.publish_post(p)
+        sb.update("content_posts", {"id": p["id"]}, {"status": "published", "published_at": dt.datetime.now(dt.timezone.utc).isoformat(), "publish_url": url, "issues": (p.get("issues") or []) + notes})
+        if p.get("idea_id"): sb.update("content_ideas", {"id": p["idea_id"]}, {"status": "published"})
+        print("published:", p["title"], url, notes); live_check(p, url, static=True); return url
+    if os.environ.get("FEATURED_REQUIRED", "1") == "1":
+        fm = requests.get(f"{w.base}/wp-json/wp/v2/posts/{p['wp_post_id']}", auth=w.auth, params={"context": "edit", "_fields": "featured_media"}, timeout=30).json().get("featured_media")
+        if not fm:
+            sb.update("content_posts", {"id": p["id"]}, {"error": "Featured image missing. Add it in WordPress; the post will publish at the next run."}); print("skipped, no featured image:", p["title"]); return None
+    r = requests.post(f"{w.base}/wp-json/wp/v2/posts/{p['wp_post_id']}", auth=w.auth, json={"status": "publish"}, timeout=60); r.raise_for_status()
+    sb.update("content_posts", {"id": p["id"]}, {"status": "published", "published_at": dt.datetime.now(dt.timezone.utc).isoformat(), "publish_url": r.json().get("link")})
+    if p.get("idea_id"): sb.update("content_ideas", {"id": p["idea_id"]}, {"status": "published"})
+    print("published:", p["title"], r.json().get("link")); live_check(p, r.json().get("link")); return r.json().get("link")
+
+
 def publish(site_id):
     from . import run, wp
     cfg = run.sites()[site_id]; site = run.ensure_site(cfg); w = wp.client(cfg)
@@ -387,21 +404,7 @@ def publish(site_id):
         if site.get("reviewer_required") and not p.get("reviewed_at"): print("skipped, not reviewed yet:", p["title"]); continue
         probs = lint(p["html"], site.get("banned_terms") or [], site.get("profile") == "medical")
         if probs: sb.update("content_posts", {"id": p["id"]}, {"status": "draft", "issues": probs}); print("sent back:", p["title"], probs); continue
-        try:
-            if getattr(w, "static", False):
-                url, notes = w.publish_post(p)
-                sb.update("content_posts", {"id": p["id"]}, {"status": "published", "published_at": dt.datetime.now(dt.timezone.utc).isoformat(), "publish_url": url, "issues": (p.get("issues") or []) + notes})
-                if p.get("idea_id"): sb.update("content_ideas", {"id": p["idea_id"]}, {"status": "published"})
-                print("published:", p["title"], url, notes); live_check(p, url, static=True); continue
-            if os.environ.get("FEATURED_REQUIRED", "1") == "1":
-                fm = requests.get(f"{w.base}/wp-json/wp/v2/posts/{p['wp_post_id']}", auth=w.auth, params={"context": "edit", "_fields": "featured_media"}, timeout=30).json().get("featured_media")
-                if not fm:
-                    sb.update("content_posts", {"id": p["id"]}, {"error": "Featured image missing. Add it in WordPress; the post will publish at the next run."}); print("skipped, no featured image:", p["title"]); continue
-            r = requests.post(f"{w.base}/wp-json/wp/v2/posts/{p['wp_post_id']}", auth=w.auth, json={"status": "publish"}, timeout=60); r.raise_for_status()
-            sb.update("content_posts", {"id": p["id"]}, {"status": "published", "published_at": dt.datetime.now(dt.timezone.utc).isoformat(), "publish_url": r.json().get("link")})
-            if p.get("idea_id"): sb.update("content_ideas", {"id": p["idea_id"]}, {"status": "published"})
-            print("published:", p["title"], r.json().get("link"))
-            live_check(p, r.json().get("link"))
+        try: publish_one(site, w, p)
         except Exception as e:
             sb.update("content_posts", {"id": p["id"]}, {"error": str(e)[:300]}); print("PUBLISH FAILED", p["title"], e)
 
