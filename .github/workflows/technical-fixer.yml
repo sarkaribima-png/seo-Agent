@@ -1,0 +1,40 @@
+name: technical-fixer
+# Makes exact fixes for open tech_issues and writes them as proposals (SAFE: auto-approved only on sites with tech_auto_safe and not medical; RISKY: always waits for you).
+# Also applies approved fixes of this agent, checks them on the live URL, and closes the issue only when verified. Run by hand or daily.
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "site id, or all"
+        default: "all"
+      max:
+        description: "most fixes to make in this run (FIXER_MAX)"
+        default: "10"
+      dry:
+        description: "true = only print the fixes, write nothing"
+        default: "false"
+  schedule:
+    - cron: "15 4 * * *"   # daily 09:45 IST, after the Monday tech-audit has refreshed tech_issues
+permissions: {contents: read}
+jobs:
+  fixer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - name: Run
+        # inputs go through env, never straight into the shell line
+        run: |
+          case "$MAX" in (*[!0-9]*|"") echo "max must be a number"; exit 2 ;; esac
+          if [ "$DRY" = "true" ]; then python -m seo_agent.technical_fixer "$SITE" --max "$MAX" --dry; else python -m seo_agent.technical_fixer "$SITE" --max "$MAX"; fi
+        env:
+          SITE: ${{ github.event.inputs.site || 'all' }}
+          MAX: ${{ github.event.inputs.max || '10' }}
+          DRY: ${{ github.event.inputs.dry || 'false' }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
