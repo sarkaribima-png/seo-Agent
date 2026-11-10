@@ -15,12 +15,13 @@ def site_ids(arg, kinds=None):
     if arg != "all" and arg not in s: raise SystemExit(f"unknown or inactive site: {arg}")
     return [i for i in s if (arg == i or (arg == "all" and s[i].get("mode") != "paused")) and (not kinds or s[i].get("type", "wordpress") in kinds)]
 def each(arg, fn, kinds=None):
-    """Run fn(site_id) for one site, or for every active site. One site failing does not stop the others."""
-    bad = 0
+    """Run fn(site_id) for one site, or for every active site. One site failing does not stop the others. Each run is logged to agent_runs (never raises)."""
+    from .runlog import log_run
+    bad = 0; mod = getattr(fn, "__module__", "") .rsplit(".", 1)[-1]
     for sid in site_ids(arg, kinds):
-        print(f"--- {sid} ---")
-        try: fn(sid)
-        except Exception as e: bad += 1; print(f"SITE {sid} FAILED: {e}")
+        print(f"--- {sid} ---"); t0 = time.time()
+        try: fn(sid); log_run(mod, sid, True, time.time() - t0)
+        except Exception as e: bad += 1; print(f"SITE {sid} FAILED: {e}"); log_run(mod, sid, False, time.time() - t0, str(e))
     if bad: sys.exit(1)
 def now(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def ensure_site(site):
@@ -78,7 +79,7 @@ def apply_approved(site, w):
         except Exception as e:
             sb.update("proposals", {"id": p["id"]}, {"status": "failed", "reason": str(e)[:300]}); print("FAILED", p["id"], e)
 def apply_rollbacks(site, w):
-    for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.rollback_requested"):
+    for p in sb.select("proposals", site_id=f"eq.{site['id']}", status="eq.rollback_requested", kind="neq.tech_fix"):
         try:
             if p["kind"] == "title_meta": w.rollback(p["post_id"], p["backup_id"])
             else: w.rollback_mod(p["post_id"], p["backup_id"])
