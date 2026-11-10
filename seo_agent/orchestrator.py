@@ -211,7 +211,7 @@ def candidates(st, today):
 
 def rank_tasks(tasks, today):
     """High impact x low effort first. Stable and explainable: score, then number of items affected, then agent order, then text."""
-    for t in tasks: t["_score"] = IMPACT[t["impact"]] * EASE[t["effort"]]
+    for t in tasks: t["_score"] = IMPACT[t["impact"]] * EASE[t["effort"]] + t.get("_boost", 0)
     tasks = sorted(tasks, key=lambda t: (-t["_score"], -t["_n"], AGENT_ORDER[t["agent"]], t["task"]))[:MAX_TASKS]
     out = []
     for t in tasks:
@@ -258,6 +258,9 @@ def llm_summary(plan, base, ask=None):
 def build_plan(site_id, st, today, ask=None):
     st = dict(st, today=today); week = week_of(today)
     tasks, risks, ev = candidates(st, today)
+    try:
+        from . import strategist; tasks = strategist.apply_goals(tasks, site_id)   # goal boosts, monthly post cap; fails open
+    except Exception: pass
     paused = (st["site"] or {}).get("mode") == "paused"
     plan_tasks = [] if paused else rank_tasks(tasks, today)
     if len(tasks) > MAX_TASKS and not paused: risks.append(f"{len(tasks) - MAX_TASKS} more task(s) were left for later weeks (limit: {MAX_TASKS} per site per week).")
